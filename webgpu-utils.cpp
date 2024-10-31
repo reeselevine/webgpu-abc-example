@@ -21,22 +21,25 @@ ShaderModule loadShader(const std::filesystem::path& path, Device device) {
   shaderCodeDesc.chain.sType = SType::ShaderSourceWGSL;
   ShaderModuleDescriptor shaderDesc{};
   shaderDesc.nextInChain = &shaderCodeDesc.chain;
-  shaderCodeDesc.code = shaderSource.c_str();
+  StringView code;
+  code.data = shaderSource.c_str();
+  code.length = shaderSource.length();
+  shaderCodeDesc.code = code;
   //std::cout << shaderSource.data() << std::endl;
   //std::cout << "try this!\n";
   return device.createShaderModule(shaderDesc);
 }
 
 std::unique_ptr<wgpu::ErrorCallback> errorCallback(Device device) {
-  return device.setUncapturedErrorCallback([](ErrorType type, char const* message) {
+  return device.setUncapturedErrorCallback([](ErrorType type, StringView message) {
     std::cout << "Device error: type " << type;
-    if (message) std::cout << " (message: " << message << ")";
+    if (message.length > 0) std::cout << " (message: " << message.data << ")";
     std::cout << std::endl;
     });
 }
 
-void deviceLostCallback(WGPUDeviceLostReason reason, char const* message, void* /* pUserData*/) {
+void deviceLostCallback(WGPUDeviceLostReason reason, WGPUStringView message, void* /* pUserData*/) {
   std::cout << "Device lost: reason " << reason;
-  if (message) std::cout << " (message: " << message << ")";
+  if (message.length > 0) std::cout << " (message: " << message.data << ")";
   std::cout << std::endl;
 };

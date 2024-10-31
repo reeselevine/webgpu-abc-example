@@ -5,7 +5,6 @@
 #include <webgpu/webgpu.hpp>
 using namespace wgpu;
 
-
 #include "webgpu-utils.cpp"
 
 wgpu::Device device = nullptr;
@@ -33,9 +32,9 @@ bool initDevice() {
   Adapter adapter = instance.requestAdapter(options);
   AdapterInfo info;
   adapter.getInfo(&info);
-  deviceName = info.description;
+  deviceName = info.description.data;
   DeviceDescriptor deviceDescriptor = {};
-//  deviceDescriptor.deviceLostCallback = deviceLostCallback;
+  deviceDescriptor.deviceLostCallback = deviceLostCallback;
   device = adapter.requestDevice(deviceDescriptor);
   uncapturedErrorCallback = errorCallback(device);
   return true;
@@ -90,13 +89,25 @@ void initVAComputePipeline() {
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
   std::vector<ConstantEntry> constants(2, Default);
-  constants[0].key = "wg_size";
+  StringView sv_wg_size;
+  std::string s_wg_size = "wg_size";
+  sv_wg_size.data = s_wg_size.data();
+  sv_wg_size.length = s_wg_size.length();
+  constants[0].key = sv_wg_size;
   constants[0].value = wg_size;
-  constants[1].key = "vec_size";
+  StringView sv_vec_size;
+  std::string s_vec_size = "vec_size";
+  sv_vec_size.data = s_vec_size.c_str();
+  sv_vec_size.length = s_vec_size.length();
+  constants[1].key = sv_vec_size;
   constants[1].value = vec_size;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
   computePipelineDesc.compute.constants = constants.data();
-  computePipelineDesc.compute.entryPoint = "vec_add";
+  StringView sv_entryPoint;
+  std::string s_entryPoint = "vec_add";
+  sv_entryPoint.data = s_entryPoint.c_str();
+  sv_entryPoint.length = s_entryPoint.length();
+  computePipelineDesc.compute.entryPoint = sv_entryPoint;
   computePipelineDesc.compute.module = VAShaderModule;
   computePipelineDesc.layout = VAPipelineLayout;
   VAPipeline = device.createComputePipeline(computePipelineDesc);
