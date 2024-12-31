@@ -1,23 +1,9 @@
-# Include webgpu directory, to define the 'webgpu' target
+cmake_minimum_required(VERSION 3.13) # CMake version check
+project(example)                     # Create project "example"
+set(CMAKE_CXX_STANDARD 20)           # Enable C++20 standard
 
-cmake_minimum_required(VERSION 3.10)
-project(Try)
-include(FetchContent)
+add_executable(example "example.cpp")
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-FetchContent_Declare(
-  webgpu
-  GIT_REPOSITORY git@github.com:reeselevine/WebGPU-distribution.git
-  GIT_TAG        dawn
-)
-FetchContent_MakeAvailable(webgpu)
-
-# Add the stress executable
-add_executable(vec_add
-  vec_add.cpp)
-
-target_link_libraries(vec_add PRIVATE webgpu)
+set(DAWN_FETCH_DEPENDENCIES ON)
+add_subdirectory("dawn" EXCLUDE_FROM_ALL)
+target_link_libraries(example PRIVATE dawn::webgpu_dawn)
