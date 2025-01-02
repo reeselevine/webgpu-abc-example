@@ -109,7 +109,7 @@ void initBindGroup() {
 
 void initComputePipeline() {
   // Load compute shader
-  ShaderModule shaderModule = loadShader("../vec_add.wgsl");
+  ShaderModule shaderModule = loadShader("vec_add.wgsl");
 
   // Create compute pipeline layout
   PipelineLayoutDescriptor pipelineLayoutDesc;
