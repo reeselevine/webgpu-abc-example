@@ -12,8 +12,12 @@ Buffer ABuffer;
 Buffer BBuffer;
 Buffer CBuffer;
 Buffer CReadBuffer;
+Buffer TimestampResolveBuffer;
+Buffer TimestampReadBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
+ComputePassTimestampWrites timestampWrites;
+
 const int vec_size = 131072;
 const int wg_size = 128;
 
@@ -159,6 +163,18 @@ void initBuffers() {
   CReadBufDesc.size = vec_size * sizeof(int);
   CReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
   CReadBuffer = device.CreateBuffer(&CReadBufDesc);
+
+  BufferDescriptor TimestampResolveBufDesc;
+  TimestampResolveBufDesc.mappedAtCreation = false;
+  TimestampResolveBufDesc.size = 2 * sizeof(u_long);
+  TimestampResolveBufDesc.usage = BufferUsage::QueryResolve | BufferUsage::CopySrc;
+  TimestampResolveBuffer = device.CreateBuffer(&TimestampResolveBufDesc);
+
+  BufferDescriptor TimestampReadBufDesc;
+  TimestampReadBufDesc.mappedAtCreation = false;
+  TimestampReadBufDesc.size = 2 * sizeof(u_long);
+  TimestampReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
+  TimestampReadBuffer = device.CreateBuffer(&TimestampReadBufDesc);
 }
 
 
@@ -174,6 +190,16 @@ void run() {
   queue.WriteBuffer(BBuffer, 0, B_host.data(), B_host.size() * sizeof(uint32_t));
 
   CommandEncoder encoder = device.CreateCommandEncoder();
+
+  QuerySetDescriptor querySetDesc;
+  querySetDesc.type = QueryType::Timestamp;
+  querySetDesc.count = 2;
+  timestampWrites.querySet = device.CreateQuerySet(&querySetDesc);
+  timestampWrites.beginningOfPassWriteIndex = 0;
+  timestampWrites.endOfPassWriteIndex = 1;
+
+  ComputePassDescriptor computePassDesc;
+  computePassDesc.timestampWrites = &timestampWrites;
   ComputePassEncoder computePass = encoder.BeginComputePass();
   computePass.SetPipeline(pipeline);
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
@@ -181,6 +207,8 @@ void run() {
   computePass.End();
 
   encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
+  encoder.ResolveQuerySet(timestampWrites.querySet, 0, 2, TimestampResolveBuffer, 0);
+  encoder.CopyBufferToBuffer(TimestampResolveBuffer, 0, TimestampReadBuffer, 0, 2 * sizeof(u_long));
   CommandBuffer commands = encoder.Finish();
   queue.Submit(1, &commands);
 
@@ -193,7 +221,7 @@ void run() {
       }),
     UINT64_MAX);
   if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
-    std::cout << "Failed to map buffer" << std::endl;
+    std::cout << "Failed to map read buffer" << std::endl;
     return;
   }
 
@@ -203,6 +231,22 @@ void run() {
   }
   std::cout << "passed the test!" << std::endl;
   CReadBuffer.Unmap();
+
+  waitStatus = instance.WaitAny(
+    TimestampReadBuffer.MapAsync(MapMode::Read, 0, 2 * sizeof(u_long), CallbackMode::AllowSpontaneous,
+      [&readStatus](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        readStatus = status;
+      }),
+    UINT64_MAX);
+  if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
+    std::cout << "Failed to map timestamp read buffer" << std::endl;
+    return;
+  }
+
+  const u_long* timestampOutput = (const u_long*)TimestampReadBuffer.GetConstMappedRange(0, 2 * sizeof(u_long));
+  std::cout << "Beginning: " << timestampOutput[0] << std::endl;
+  std::cout << "End: " << timestampOutput[1] << std::endl;
+  TimestampReadBuffer.Unmap();
 }
 
 int main() {
@@ -231,6 +275,10 @@ int main() {
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
   DeviceDescriptor deviceDescriptor;
+  std::vector<FeatureName> deviceFeatures;
+  deviceFeatures.push_back(FeatureName::TimestampQuery);
+  deviceDescriptor.requiredFeatureCount = deviceFeatures.size();
+  deviceDescriptor.requiredFeatures = deviceFeatures.data();
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
     [](const Device& device, DeviceLostReason reason, const char* message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
