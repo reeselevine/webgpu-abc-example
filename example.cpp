@@ -208,15 +208,27 @@ void run() {
 int main() {
   InstanceFeatures features;
   features.timedWaitAnyEnable = true; // for some reason this defaults to false
+  const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
+  DawnTogglesDescriptor instanceTogglesDesc;
+  instanceTogglesDesc.enabledToggles = instanceEnabledToggles;
+  instanceTogglesDesc.enabledToggleCount = 1;
   InstanceDescriptor descriptor;
   descriptor.features = features;
+  descriptor.nextInChain = &instanceTogglesDesc;
   instance = wgpu::CreateInstance(&descriptor);
 
+  const char* const adapterEnabledToggles[] = {"internal_compute_timestamp_queries"};
+  DawnTogglesDescriptor adapterTogglesDesc;
+  adapterTogglesDesc.enabledToggles = adapterEnabledToggles;
+  adapterTogglesDesc.enabledToggleCount = 1;
+
+  RequestAdapterOptions adapterOptions;
+  adapterOptions.nextInChain = &adapterTogglesDesc;
   RequestAdapterStatus adapterStatus;
   Adapter adapter;
   WaitStatus waitStatus = instance.WaitAny(
     instance.RequestAdapter(
-      nullptr, CallbackMode::AllowSpontaneous,
+      &adapterOptions, CallbackMode::AllowSpontaneous,
       [&adapterStatus, &adapter](RequestAdapterStatus s, Adapter _adapter,
                          StringView message) {
         adapterStatus = s;
@@ -228,9 +240,14 @@ int main() {
     return 1;
   }
 
+  const char* const deviceDisabledToggles[] = {"timestamp_quantization"};
+  DawnTogglesDescriptor deviceTogglesDesc;
+  deviceTogglesDesc.disabledToggles = deviceDisabledToggles;
+  deviceTogglesDesc.disabledToggleCount = 1;
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
   DeviceDescriptor deviceDescriptor;
+  deviceDescriptor.nextInChain = &deviceTogglesDesc;
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
     [](const Device& device, DeviceLostReason reason, const char* message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
