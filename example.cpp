@@ -252,10 +252,14 @@ void run() {
 int main() {
   InstanceFeatures features;
   features.timedWaitAnyEnable = true; // for some reason this defaults to false
+  const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
+  DawnTogglesDescriptor instanceTogglesDesc;
+  instanceTogglesDesc.enabledToggles = instanceEnabledToggles;
+  instanceTogglesDesc.enabledToggleCount = 1;
   InstanceDescriptor descriptor;
   descriptor.features = features;
+  descriptor.nextInChain = &instanceTogglesDesc;
   instance = wgpu::CreateInstance(&descriptor);
-
   RequestAdapterStatus adapterStatus;
   Adapter adapter;
   WaitStatus waitStatus = instance.WaitAny(
@@ -272,9 +276,14 @@ int main() {
     return 1;
   }
 
+  const char* const deviceEnabledToggles[] = {"metal_serialize_timestamp_generation_and_resolution"};
+  DawnTogglesDescriptor deviceTogglesDesc;
+  deviceTogglesDesc.enabledToggles = deviceEnabledToggles;
+  deviceTogglesDesc.enabledToggleCount = 1;
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
   DeviceDescriptor deviceDescriptor;
+  deviceDescriptor.nextInChain = &deviceTogglesDesc;
   std::vector<FeatureName> deviceFeatures;
   deviceFeatures.push_back(FeatureName::TimestampQuery);
   deviceDescriptor.requiredFeatureCount = deviceFeatures.size();
