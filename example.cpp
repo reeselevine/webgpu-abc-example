@@ -212,6 +212,21 @@ void run() {
   CommandBuffer commands = encoder.Finish();
   queue.Submit(1, &commands);
 
+  WaitStatus queueWaitStatus = WaitStatus::Unknown;
+  QueueWorkDoneStatus workDoneStatus = QueueWorkDoneStatus::Unknown;
+
+  queueWaitStatus = instance.WaitAny(
+    queue.OnSubmittedWorkDone(CallbackMode::AllowSpontaneous,
+      [&workDoneStatus](QueueWorkDoneStatus status) {
+        workDoneStatus = status;
+      }),
+    UINT64_MAX);
+  
+  if (queueWaitStatus != WaitStatus::Success || workDoneStatus != QueueWorkDoneStatus::Success) {
+    std::cout << "Failed to submit work" << std::endl;
+    return;
+  }
+
   WaitStatus waitStatus = WaitStatus::Unknown;
   MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
   waitStatus = instance.WaitAny(
