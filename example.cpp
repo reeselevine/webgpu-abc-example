@@ -241,9 +241,12 @@ int main() {
   }
 
   const char* const deviceDisabledToggles[] = {"timestamp_quantization"};
+  const char* const deviceEnabledToggles[] = {"use_tint_ir", "dump_shaders"};
   DawnTogglesDescriptor deviceTogglesDesc;
   deviceTogglesDesc.disabledToggles = deviceDisabledToggles;
   deviceTogglesDesc.disabledToggleCount = 1;
+  deviceTogglesDesc.enabledToggles = deviceEnabledToggles;
+  deviceTogglesDesc.enabledToggleCount = 2;
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
   DeviceDescriptor deviceDescriptor;
@@ -251,6 +254,10 @@ int main() {
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
     [](const Device& device, DeviceLostReason reason, const char* message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
+                << ", Message: " << message << "\n";
+    });
+  deviceDescriptor.SetUncapturedErrorCallback([](const Device& device, ErrorType reason, const char* message) {
+      std::cout << "Device error! Reason: " << static_cast<int>(reason)
                 << ", Message: " << message << "\n";
     });
   waitStatus = instance.WaitAny(
