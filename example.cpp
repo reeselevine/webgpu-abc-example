@@ -308,6 +308,10 @@ int main() {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
                 << ", Message: " << message << "\n";
     });
+  deviceDescriptor.SetUncapturedErrorCallback([](const Device& device, ErrorType reason, const char* message) {
+      std::cout << "Device error! Reason: " << static_cast<int>(reason)
+                << ", Message: " << message << "\n";
+    });
   waitStatus = instance.WaitAny(
     adapter.RequestDevice(
       &deviceDescriptor, CallbackMode::AllowSpontaneous,
