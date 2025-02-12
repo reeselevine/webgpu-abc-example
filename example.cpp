@@ -200,7 +200,7 @@ void run() {
 
   ComputePassDescriptor computePassDesc;
   computePassDesc.timestampWrites = &timestampWrites;
-  ComputePassEncoder computePass = encoder.BeginComputePass();
+  ComputePassEncoder computePass = encoder.BeginComputePass(&computePassDesc);
   computePass.SetPipeline(pipeline);
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
   computePass.DispatchWorkgroups(vec_size / wg_size, 1, 1);
