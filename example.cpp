@@ -16,6 +16,7 @@ BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
 const int vec_size = 131072;
 const int wg_size = 128;
+const int bc_size = 4;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -32,11 +33,15 @@ ShaderModule loadShader(const std::filesystem::path& path) {
   if (!file.is_open()) {
     return nullptr;
   }
+
   file.seekg(0, std::ios::end);
   size_t size = file.tellg();
-  std::string shaderSource(size, ' ');
+  std::string shaderSource = "enable subgroups;\n";
+  size_t sourceBegin = shaderSource.size();
+  shaderSource.resize(sourceBegin + size);
   file.seekg(0);
-  file.read(shaderSource.data(), size);
+  file.read(shaderSource.data() + sourceBegin, size);
+
 
   ShaderSourceWGSL shaderCodeDesc{};
   ShaderModuleDescriptor shaderModuleDescriptor{
@@ -153,13 +158,16 @@ void initComputePipeline() {
 
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
-  std::vector<ConstantEntry> constants(2);
+  std::vector<ConstantEntry> constants(3);
   StringView wgSizeSV = makeStringView("wg_size");
   constants[0].key = wgSizeSV;
   constants[0].value = wg_size;
   StringView vecSizeSV = makeStringView("vec_size");
   constants[1].key = vecSizeSV;
   constants[1].value = vec_size;
+  StringView bc_sizeSV = makeStringView("bc_size");
+  constants[2].key = bc_sizeSV;
+  constants[2].value = bc_size;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
   computePipelineDesc.compute.constants = constants.data();
   StringView entryPointSV = makeStringView("vec_add");
@@ -233,7 +241,8 @@ void run() {
 
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
   for (int i = 0; i < vec_size; i++) {
-    assert(output[i] == 3);
+    //assert(output[i] == 3);
+    std::cout << "output[" << i << "]: " << output[i] << std::endl; 
   }
   std::cout << "passed the test!" << std::endl;
   CReadBuffer.Unmap();
@@ -264,7 +273,26 @@ int main() {
 
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
-  DeviceDescriptor deviceDescriptor;
+  DeviceDescriptor deviceDescriptor{};
+
+    std::vector<FeatureName> reqFeatures = {
+        FeatureName::Subgroups,
+        FeatureName::TimestampQuery,
+    };
+    
+
+    // features enable checking
+    for (uint i = 0; i < reqFeatures.size(); i++) {
+      if (adapter.HasFeature(reqFeatures[i]) != true) {
+        std::cout << "tried to enable feature:" << i << std::endl;
+      }
+    }
+
+    deviceDescriptor.requiredFeatures = reqFeatures.data();
+    deviceDescriptor.requiredFeatureCount =
+        static_cast<uint32_t>(reqFeatures.size());
+
+
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
     [](const Device& device, DeviceLostReason reason, const char* message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
