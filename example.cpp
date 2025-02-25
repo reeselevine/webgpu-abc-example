@@ -12,6 +12,7 @@ Buffer ABuffer;
 Buffer BBuffer;
 Buffer CBuffer;
 Buffer CReadBuffer;
+Buffer DBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
 const int vec_size = 131072;
@@ -74,6 +75,13 @@ void initBindGroupLayout() {
   CEntry.visibility = ShaderStage::Compute;
   bindings.push_back(CEntry);
 
+  // atomic buffer
+  BindGroupLayoutEntry DEntry;
+  DEntry.binding = 3;
+  DEntry.buffer.type = BufferBindingType::Storage;
+  DEntry.visibility = ShaderStage::Compute;
+  bindings.push_back(DEntry);
+
   BindGroupLayoutDescriptor bindGroupLayoutDesc;
   bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
   bindGroupLayoutDesc.entries = bindings.data();
@@ -104,6 +112,14 @@ void initBindGroup() {
   CEntry.offset = 0;
   CEntry.size = vec_size * sizeof(int);
   entries.push_back(CEntry);
+
+  // atomic buffer
+  BindGroupEntry DEntry;
+  DEntry.binding = 3;
+  DEntry.buffer = DBuffer;
+  DEntry.offset = 0;
+  DEntry.size = sizeof(int);
+  entries.push_back(DEntry);
 
   BindGroupDescriptor bindGroupDesc;
   bindGroupDesc.layout = bindGroupLayout;
@@ -201,6 +217,13 @@ void initBuffers() {
   CReadBufDesc.size = vec_size * sizeof(int);
   CReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
   CReadBuffer = device.CreateBuffer(&CReadBufDesc);
+
+  // atomic buffer 
+  BufferDescriptor DBufDesc;
+  DBufDesc.mappedAtCreation = false;
+  DBufDesc.size = sizeof(int);
+  DBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
+  DBuffer = device.CreateBuffer(&DBufDesc);
 }
 
 
@@ -208,12 +231,18 @@ void run() {
   Queue queue = device.GetQueue();
   std::vector<uint32_t> A_host;
   std::vector<uint32_t> B_host;
+  std::vector<uint32_t> D_host;
+  
   for (int i = 0; i < vec_size; i++) {
     A_host.push_back(1);
     B_host.push_back(2);
   }
+
+  D_host.push_back(1);
+
   queue.WriteBuffer(ABuffer, 0, A_host.data(), A_host.size() * sizeof(uint32_t));
   queue.WriteBuffer(BBuffer, 0, B_host.data(), B_host.size() * sizeof(uint32_t));
+  queue.WriteBuffer(DBuffer, 0, D_host.data(), D_host.size() * sizeof(uint32_t));
 
   CommandEncoder encoder = device.CreateCommandEncoder();
   ComputePassEncoder computePass = encoder.BeginComputePass();
