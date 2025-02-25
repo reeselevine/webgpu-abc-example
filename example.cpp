@@ -108,14 +108,48 @@ void initBindGroup() {
 }
 
 void initComputePipeline() {
-  // Load compute shader
-  ShaderModule shaderModule = loadShader("vec_add.wgsl");
 
   // Create compute pipeline layout
   PipelineLayoutDescriptor pipelineLayoutDesc;
   pipelineLayoutDesc.bindGroupLayoutCount = 1;
   pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
   PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
+
+  // Load compute shader
+  ShaderModule shaderModule = loadShader("vec_add.wgsl");
+  WaitStatus waitStatus = WaitStatus::Unknown;
+  wgpu::CompilationInfoRequestStatus compilationStatus = CompilationInfoRequestStatus::Unknown;
+  WGPUCompilationInfo _compilationInfo = {};
+
+  waitStatus = instance.WaitAny(shaderModule.GetCompilationInfo(CallbackMode::AllowSpontaneous,
+  [&compilationStatus, &_compilationInfo](CompilationInfoRequestStatus status, CompilationInfo const* compilationInfo) {
+    compilationStatus = status;
+
+    if (compilationInfo != nullptr) {
+      uint32_t compileError = 0U;
+
+      // Copy the compilerInfo
+      _compilationInfo = *compilationInfo;
+
+      // Print and iterate over all compiler messages
+      std::cout << "Compiler Message Count: " << _compilationInfo.messageCount << std::endl;
+      for (size_t i = 0; i < _compilationInfo.messageCount; ++i) {
+        const WGPUCompilationMessage& msg = _compilationInfo.messages[i];
+        std::cout << "Message Type: " << (uint32_t)(msg.type) << std::endl; 
+        std::cout << "  " << std::string(msg.message.data, msg.message.length) << std::endl;
+        
+        // msg.type = 1 = ERROR  
+        compileError = compileError || (uint32_t)(msg.type);
+      }
+      // If odd, cancel pipeline 
+      assert(compileError % 2 != 1);
+    }
+  }), UINT64_MAX);
+
+  if (waitStatus != WaitStatus::Success || compilationStatus != CompilationInfoRequestStatus::Success) { 
+    std::cout << "Compiler Failed with Error Code: " << (uint32_t)compilationStatus << std::endl;
+    return;
+  }
 
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
