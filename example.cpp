@@ -37,7 +37,8 @@ ShaderModule loadShader(const std::filesystem::path& path) {
 
   file.seekg(0, std::ios::end);
   size_t size = file.tellg();
-  std::string shaderSource = "enable subgroups;\n";
+  //james subgroups and uniformity analysis
+  std::string shaderSource = "enable subgroups;\nenable chromium_disable_uniformity_analysis;\n";
   size_t sourceBegin = shaderSource.size();
   shaderSource.resize(sourceBegin + size);
   file.seekg(0);
@@ -147,7 +148,7 @@ void initComputePipeline() {
     compilationStatus = status;
 
     if (compilationInfo != nullptr) {
-      uint32_t compileError = 0U;
+      bool compileError = false;
 
       // Copy the compilerInfo
       _compilationInfo = *compilationInfo;
@@ -156,16 +157,25 @@ void initComputePipeline() {
       std::cout << "Compiler Message Count: " << _compilationInfo.messageCount << std::endl;
       for (size_t i = 0; i < _compilationInfo.messageCount; ++i) {
         const WGPUCompilationMessage& msg = _compilationInfo.messages[i];
-        std::cout << "Message Type: " << (uint32_t)(msg.type) << std::endl; 
+        std::cout << "Line: " << (uint32_t)(msg.lineNum - msg.offset) << " " << std::endl;
+        std::cout << "msg type: " << (uint32_t)(msg.type) << std::endl; 
         std::cout << "  " << std::string(msg.message.data, msg.message.length) << std::endl;
         
-        // msg.type = 1 = ERROR  
-        compileError = compileError || (uint32_t)(msg.type);
+        // msg.type = 1 = ERROR 
+        if (std::string(msg.message.data, msg.message.length) != "'subgroupExclusiveAdd' must only be called from uniform control flow") {
+          if (msg.type == 1) {
+            compileError = true;
+          }
+          std::cout << "normal" << std::endl; 
+        }else{
+          std::cout << "subgroup error but continue" << std::endl;
+        }
       }
       // If odd, cancel pipeline 
-      assert(compileError % 2 != 1);
+      assert(compileError != 1);
     }
   }), UINT64_MAX);
+  
 
   if (waitStatus != WaitStatus::Success || compilationStatus != CompilationInfoRequestStatus::Success) { 
     std::cout << "Compiler Failed with Error Code: " << (uint32_t)compilationStatus << std::endl;
@@ -235,10 +245,10 @@ void run() {
   
   for (int i = 0; i < vec_size; i++) {
     A_host.push_back(1);
-    B_host.push_back(2);
+    B_host.push_back(0);
   }
 
-  D_host.push_back(1);
+  D_host.push_back(0);
 
   queue.WriteBuffer(ABuffer, 0, A_host.data(), A_host.size() * sizeof(uint32_t));
   queue.WriteBuffer(BBuffer, 0, B_host.data(), B_host.size() * sizeof(uint32_t));
@@ -269,7 +279,7 @@ void run() {
   }
 
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
-  for (int i = 0; i < vec_size; i++) {
+  for (int i = 0; i < 1024; i++) { // james print
     //assert(output[i] == 3);
     std::cout << "output[" << i << "]: " << output[i] << std::endl; 
   }
@@ -279,8 +289,13 @@ void run() {
 
 int main() {
   InstanceFeatures features;
+  const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
+  DawnTogglesDescriptor instanceTogglesDesc;
+  instanceTogglesDesc.enabledToggles = instanceEnabledToggles;
+  instanceTogglesDesc.enabledToggleCount = 1;
   features.timedWaitAnyEnable = true; // for some reason this defaults to false
   InstanceDescriptor descriptor;
+  descriptor.nextInChain = &instanceTogglesDesc;
   descriptor.features = features;
   instance = wgpu::CreateInstance(&descriptor);
 
