@@ -15,9 +15,9 @@ Buffer CReadBuffer;
 Buffer DBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
-const int vec_size = 131072;
+const int vec_size = 1024;
 const int wg_size = 128;
-const int bc_size = 4;
+const int BATCH_SIZE = 2;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -38,11 +38,13 @@ ShaderModule loadShader(const std::filesystem::path& path) {
   file.seekg(0, std::ios::end);
   size_t size = file.tellg();
   //james subgroups and uniformity analysis
-  std::string shaderSource = "enable subgroups;\nenable chromium_disable_uniformity_analysis;\n";
+  std::string shaderSource = "enable subgroups;\ndiagnostic(off, subgroup_uniformity);\n";
   size_t sourceBegin = shaderSource.size();
   shaderSource.resize(sourceBegin + size);
   file.seekg(0);
   file.read(shaderSource.data() + sourceBegin, size);
+  shaderSource.replace(shaderSource.find("const BATCH_SIZE = 4;"), sizeof("const BATCH_SIZE = 4;") - 1, "const BATCH_SIZE = " + std::to_string(BATCH_SIZE) + ";");
+
 
 
   ShaderSourceWGSL shaderCodeDesc{};
@@ -184,16 +186,13 @@ void initComputePipeline() {
 
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
-  std::vector<ConstantEntry> constants(3);
+  std::vector<ConstantEntry> constants(2);
   StringView wgSizeSV = makeStringView("wg_size");
   constants[0].key = wgSizeSV;
   constants[0].value = wg_size;
   StringView vecSizeSV = makeStringView("vec_size");
   constants[1].key = vecSizeSV;
   constants[1].value = vec_size;
-  StringView bc_sizeSV = makeStringView("bc_size");
-  constants[2].key = bc_sizeSV;
-  constants[2].value = bc_size;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
   computePipelineDesc.compute.constants = constants.data();
   StringView entryPointSV = makeStringView("vec_add");
