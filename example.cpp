@@ -15,9 +15,11 @@ Buffer CReadBuffer;
 Buffer DBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
-const int vec_size = 1024;
-const int wg_size = 128;
+
+const int workgroupSize = 128;
+const int numWorkgroups = 2;
 const int BATCH_SIZE = 2;
+const int vec_size = workgroupSize * numWorkgroups * BATCH_SIZE;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -159,7 +161,7 @@ void initComputePipeline() {
       std::cout << "Compiler Message Count: " << _compilationInfo.messageCount << std::endl;
       for (size_t i = 0; i < _compilationInfo.messageCount; ++i) {
         const WGPUCompilationMessage& msg = _compilationInfo.messages[i];
-        std::cout << "Line: " << (uint32_t)(msg.lineNum - msg.offset) << " " << std::endl;
+        std::cout << "Line: " << (uint32_t)(msg.lineNum) << " " << std::endl;
         std::cout << "msg type: " << (uint32_t)(msg.type) << std::endl; 
         std::cout << "  " << std::string(msg.message.data, msg.message.length) << std::endl;
         
@@ -186,13 +188,10 @@ void initComputePipeline() {
 
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
-  std::vector<ConstantEntry> constants(2);
+  std::vector<ConstantEntry> constants(1);
   StringView wgSizeSV = makeStringView("wg_size");
   constants[0].key = wgSizeSV;
-  constants[0].value = wg_size;
-  StringView vecSizeSV = makeStringView("vec_size");
-  constants[1].key = vecSizeSV;
-  constants[1].value = vec_size;
+  constants[0].value = workgroupSize;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
   computePipelineDesc.compute.constants = constants.data();
   StringView entryPointSV = makeStringView("vec_add");
@@ -257,7 +256,7 @@ void run() {
   ComputePassEncoder computePass = encoder.BeginComputePass();
   computePass.SetPipeline(pipeline);
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
-  computePass.DispatchWorkgroups(vec_size / wg_size, 1, 1);
+  computePass.DispatchWorkgroups(numWorkgroups, 1, 1);
   computePass.End();
 
   encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
