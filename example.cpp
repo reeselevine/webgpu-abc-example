@@ -2,6 +2,7 @@
 #include <iostream>
 #include <filesystem>
 #include <fstream>
+#include <unistd.h>
 
 using namespace wgpu;
 
@@ -16,10 +17,13 @@ Buffer DBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
 
-const int workgroupSize = 128;
-const int numWorkgroups = 2;
-const int BATCH_SIZE = 2;
-const int vec_size = workgroupSize * numWorkgroups * BATCH_SIZE;
+int workgroupSize = 128;
+int numWorkgroups = 2;
+int BATCH_SIZE = 2;
+int deviceID = 0;
+int alt = 1;
+bool checkResults = false;
+int vec_size;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -242,7 +246,7 @@ void run() {
   std::vector<uint32_t> D_host;
   
   for (int i = 0; i < vec_size; i++) {
-    A_host.push_back(1);
+    A_host.push_back(alt);
     B_host.push_back(0);
   }
 
@@ -277,15 +281,52 @@ void run() {
   }
 
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
-  for (int i = 0; i < 1024; i++) { // james print
+
+  if (checkResults) {
+    for (int i = 0; i < vec_size; i++) { // james print
     //assert(output[i] == 3);
     std::cout << "output[" << i << "]: " << output[i] << std::endl; 
+    }
   }
   std::cout << "passed the test!" << std::endl;
   CReadBuffer.Unmap();
 }
 
-int main() {
+int main(int argc,  char* argv[]) {
+  int c;
+  while ((c = getopt (argc, argv, "ct:w:d:a:s:")) != -1)
+    switch (c)
+      {
+      case 'a':
+        alt = atoi(optarg);
+        break;
+	    case 's':
+        BATCH_SIZE = atoi(optarg);
+        break;
+	    case 't':
+        workgroupSize = atoi(optarg);
+        break;
+      case 'w':
+        numWorkgroups = atoi(optarg);
+        break;
+      case 'c':
+        checkResults = true;
+        break;
+      case 'd':
+        deviceID = atoi(optarg);
+        break;
+      case '?':
+        if (optopt == 't' || optopt == 'w')
+          std::cerr << "Option -" << optopt << "requires an argument\n";
+        else 
+          std::cerr << "Unknown option" << optopt << "\n";
+        return 1;
+      default:
+        abort ();
+      }
+
+  vec_size = numWorkgroups * workgroupSize * BATCH_SIZE;
+
   InstanceFeatures features;
   const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
   DawnTogglesDescriptor instanceTogglesDesc;
@@ -296,12 +337,22 @@ int main() {
   descriptor.nextInChain = &instanceTogglesDesc;
   descriptor.features = features;
   instance = wgpu::CreateInstance(&descriptor);
+  
+
+  RequestAdapterOptions adapterOptions = {};
+    adapterOptions.backendType = wgpu::BackendType::Vulkan;  // Vulkan is a good option for Nvidia
+    if (deviceID == 0) {
+      adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;  // Prefer high performance (Discrete GPU)
+    }
+    adapterOptions.forceFallbackAdapter = WGPUBool(false);  // Do not force fallback adapter (Intel)
+
+
 
   RequestAdapterStatus adapterStatus;
   Adapter adapter;
   WaitStatus waitStatus = instance.WaitAny(
     instance.RequestAdapter(
-      nullptr, CallbackMode::AllowSpontaneous,
+      &adapterOptions, CallbackMode::AllowSpontaneous,
       [&adapterStatus, &adapter](RequestAdapterStatus s, Adapter _adapter,
                          StringView message) {
         adapterStatus = s;
@@ -312,6 +363,8 @@ int main() {
     std::cout << "Failed to get adapter" << std::endl;
     return 1;
   }
+
+
 
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
@@ -357,8 +410,24 @@ int main() {
 
   AdapterInfo info;
   adapter.GetInfo(&info);
-  std::string deviceName = info.description.data;
-  std::cout << "using device: " << deviceName << std::endl;
+    std::cout << "VendorID: " << std::hex << info.vendorID << std::dec
+              << std::endl;
+    std::cout << "Vendor: " << std::string(info.vendor.data, info.vendor.length)
+              << std::endl;
+    std::cout << "Architecture: "
+              << std::string(info.architecture.data, info.architecture.length)
+              << std::endl;
+    std::cout << "DeviceID: " << std::hex << info.deviceID << std::dec
+              << std::endl;
+    std::cout << "Name: " << std::string(info.device.data, info.device.length)
+              << std::endl;
+    std::cout << "Driver description: "
+              << std::string(info.description.data, info.description.length)
+              << std::endl;
+    std::cout << "Backend "
+              << (info.backendType == wgpu::BackendType::Vulkan ? "vk"
+                                                                : "not vk")
+              << std::endl;  // LOL
   initBindGroupLayout();
   initComputePipeline();
   initBuffers();
