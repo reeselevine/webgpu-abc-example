@@ -1,6 +1,4 @@
 #include <webgpu/webgpu_cpp.h>
-//#include <dawn/webgpu_cpp.h>
-//#include <dawn/dawn_proc.h>
 #include <iostream>
 #include <filesystem>
 #include <fstream>
@@ -16,11 +14,19 @@ Buffer BBuffer;
 Buffer CBuffer;
 Buffer CReadBuffer;
 Buffer DBuffer;
+Buffer debugBuffer;
+Buffer debugReadBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
-const int vec_size = 131072;
-const int wg_size = 128;
-const int bc_size = 4;
+
+int workgroupSize = 128;
+int numWorkgroups = 2;
+int BATCH_SIZE = 2;
+int deviceID = 0;
+int alt = 1;
+bool checkResults = false;
+int vec_size;
+int debug_size = 2;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -37,11 +43,18 @@ ShaderModule loadShader(const std::filesystem::path& path) {
   if (!file.is_open()) {
     return nullptr;
   }
+
   file.seekg(0, std::ios::end);
   size_t size = file.tellg();
-  std::string shaderSource(size, ' ');
+  //james subgroups and uniformity analysis
+  std::string shaderSource = "enable subgroups;\ndiagnostic(off, subgroup_uniformity);\n";
+  size_t sourceBegin = shaderSource.size();
+  shaderSource.resize(sourceBegin + size);
   file.seekg(0);
-  file.read(shaderSource.data(), size);
+  file.read(shaderSource.data() + sourceBegin, size);
+  shaderSource.replace(shaderSource.find("const BATCH_SIZE = 4;"), sizeof("const BATCH_SIZE = 4;") - 1, "const BATCH_SIZE = " + std::to_string(BATCH_SIZE) + ";");
+
+
 
   ShaderSourceWGSL shaderCodeDesc{};
   ShaderModuleDescriptor shaderModuleDescriptor{
@@ -76,10 +89,17 @@ void initBindGroupLayout() {
 
   // atomic buffer
   BindGroupLayoutEntry DEntry;
-  CEntry.binding = 3;
-  CEntry.buffer.type = BufferBindingType::Storage;
-  CEntry.visibility = ShaderStage::Compute;
+  DEntry.binding = 3;
+  DEntry.buffer.type = BufferBindingType::Storage;
+  DEntry.visibility = ShaderStage::Compute;
   bindings.push_back(DEntry);
+
+  // debug
+  BindGroupLayoutEntry debugEntry;
+  debugEntry.binding = 4;
+  debugEntry.buffer.type = BufferBindingType::Storage;
+  debugEntry.visibility = ShaderStage::Compute;
+  bindings.push_back(debugEntry);
 
   BindGroupLayoutDescriptor bindGroupLayoutDesc;
   bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
@@ -87,24 +107,10 @@ void initBindGroupLayout() {
   bindGroupLayout = device.CreateBindGroupLayout(&bindGroupLayoutDesc);
 }
 
-void printDeviceLimits() {
-  wgpu::SupportedLimits limits;
-  wgpu::ConvertibleStatus status = device.GetLimits(&limits);
-
-  if (status) {
-      // Now we can access the device limits from 'limits'
-      std::cout << "Max Uniform Buffers per Shader Stage: " << limits.limits.maxUniformBuffersPerShaderStage << std::endl;
-      std::cout << "Max Uniform Buffer Binding Size: " << limits.limits.maxUniformBufferBindingSize << " bytes" << std::endl;
-   } else {
-     std::cerr << "Failed to retrieve device limits" << std::endl;
-  }
-}
-
 
 void initBindGroup() {
   std::vector<BindGroupEntry> entries;
 
-  // this is the input vector
   BindGroupEntry AEntry;
   AEntry.binding = 0;
   AEntry.buffer = ABuffer;
@@ -112,16 +118,13 @@ void initBindGroup() {
   AEntry.size = vec_size * sizeof(int);
   entries.push_back(AEntry);
 
-  // this is the output vector
   BindGroupEntry BEntry;
   BEntry.binding = 1;
   BEntry.buffer = BBuffer;
   BEntry.offset = 0;
-  BEntry.size = vec_size * sizeof(int);
+  BEntry.size = numWorkgroups * sizeof(int);
   entries.push_back(BEntry);
 
-
-  // i made this the state vector
   BindGroupEntry CEntry;
   CEntry.binding = 2;
   CEntry.buffer = CBuffer;
@@ -129,13 +132,22 @@ void initBindGroup() {
   CEntry.size = vec_size * sizeof(int);
   entries.push_back(CEntry);
 
-  // atomic buffer
+  // part_id
   BindGroupEntry DEntry;
-  CEntry.binding = 3;
-  CEntry.buffer = DBuffer;
-  CEntry.offset = 0;
-  CEntry.size = sizeof(uint);
+  DEntry.binding = 3;
+  DEntry.buffer = DBuffer;
+  DEntry.offset = 0;
+  DEntry.size = sizeof(int);
   entries.push_back(DEntry);
+  
+  // debug
+  BindGroupEntry debugEntry;
+  debugEntry.binding = 4;
+  debugEntry.buffer = debugBuffer;
+  debugEntry.offset = 0;
+  debugEntry.size = sizeof(int) * debug_size;
+  entries.push_back(debugEntry);
+
 
   BindGroupDescriptor bindGroupDesc;
   bindGroupDesc.layout = bindGroupLayout;
@@ -145,6 +157,13 @@ void initBindGroup() {
 }
 
 void initComputePipeline() {
+
+  // Create compute pipeline layout
+  PipelineLayoutDescriptor pipelineLayoutDesc;
+  pipelineLayoutDesc.bindGroupLayoutCount = 1;
+  pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
+  PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
+
   // Load compute shader
   ShaderModule shaderModule = loadShader("vec_add.wgsl");
   WaitStatus waitStatus = WaitStatus::Unknown;
@@ -156,7 +175,7 @@ void initComputePipeline() {
     compilationStatus = status;
 
     if (compilationInfo != nullptr) {
-      uint32_t compileError = 0U;
+      bool compileError = false;
 
       // Copy the compilerInfo
       _compilationInfo = *compilationInfo;
@@ -165,45 +184,38 @@ void initComputePipeline() {
       std::cout << "Compiler Message Count: " << _compilationInfo.messageCount << std::endl;
       for (size_t i = 0; i < _compilationInfo.messageCount; ++i) {
         const WGPUCompilationMessage& msg = _compilationInfo.messages[i];
-        std::cout << "Message Type: " << (uint32_t)(msg.type) << std::endl; 
+        std::cout << "Line: " << (uint32_t)(msg.lineNum) << " " << std::endl;
+        std::cout << "msg type: " << (uint32_t)(msg.type) << std::endl; 
         std::cout << "  " << std::string(msg.message.data, msg.message.length) << std::endl;
         
-        // msg.type = 1 = ERROR  
-        compileError = compileError || (uint32_t)(msg.type);
+        // msg.type = 1 = ERROR 
+        if (std::string(msg.message.data, msg.message.length) != "'subgroupExclusiveAdd' must only be called from uniform control flow") {
+          if (msg.type == 1) {
+            compileError = true;
+          }
+          std::cout << "normal" << std::endl; 
+        }else{
+          std::cout << "subgroup error but continue" << std::endl;
+        }
       }
       // If odd, cancel pipeline 
-      assert(compileError % 2 != 1);
+      assert(compileError != 1);
     }
   }), UINT64_MAX);
+  
 
   if (waitStatus != WaitStatus::Success || compilationStatus != CompilationInfoRequestStatus::Success) { 
     std::cout << "Compiler Failed with Error Code: " << (uint32_t)compilationStatus << std::endl;
     return;
   }
 
-
-
-
-  // Create compute pipeline layout
-  PipelineLayoutDescriptor pipelineLayoutDesc;
-  pipelineLayoutDesc.bindGroupLayoutCount = 1;
-  pipelineLayoutDesc.bindGroupLayouts = &bindGroupLayout;
-  PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
-
   // Create compute pipeline
   ComputePipelineDescriptor computePipelineDesc;
-  std::vector<ConstantEntry> constants(3);
+  std::vector<ConstantEntry> constants(1);
   StringView wgSizeSV = makeStringView("wg_size");
   constants[0].key = wgSizeSV;
-  constants[0].value = wg_size;
-  StringView vecSizeSV = makeStringView("vec_size");
-  constants[1].key = vecSizeSV;
-  constants[1].value = vec_size;
-  StringView bc_sizeSV = makeStringView("bc_size");
-  constants[2].key = bc_sizeSV;
-  constants[2].value = bc_size;
+  constants[0].value = workgroupSize;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
-  std::cout << (uint32_t)constants.size() << std::endl;
   computePipelineDesc.compute.constants = constants.data();
   StringView entryPointSV = makeStringView("vec_add");
   computePipelineDesc.compute.entryPoint = entryPointSV;
@@ -221,7 +233,7 @@ void initBuffers() {
 
   BufferDescriptor BBufDesc;
   BBufDesc.mappedAtCreation = false;
-  BBufDesc.size = vec_size * sizeof(int);
+  BBufDesc.size = numWorkgroups * sizeof(int);
   BBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
   BBuffer = device.CreateBuffer(&BBufDesc);
 
@@ -237,25 +249,41 @@ void initBuffers() {
   CReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
   CReadBuffer = device.CreateBuffer(&CReadBufDesc);
 
-  // atomic buffer 
+  // part_id
   BufferDescriptor DBufDesc;
   DBufDesc.mappedAtCreation = false;
-  DBufDesc.size = sizeof(uint);
+  DBufDesc.size = sizeof(int);
   DBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
   DBuffer = device.CreateBuffer(&DBufDesc);
-  
+
+  // debuf buffer in 
+  BufferDescriptor debugBufDesc;
+  debugBufDesc.mappedAtCreation = false;
+  debugBufDesc.size = sizeof(int) * debug_size;
+  debugBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
+  debugBuffer = device.CreateBuffer(&debugBufDesc);
+
+  BufferDescriptor debugReadBufDesc;
+  debugReadBufDesc.mappedAtCreation = false;
+  debugReadBufDesc.size = debug_size * sizeof(int);
+  debugReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
+  debugReadBuffer = device.CreateBuffer(&debugReadBufDesc);
 }
 
 
-void run(int a, int b, bool c) {
+void run() {
   Queue queue = device.GetQueue();
   std::vector<uint32_t> A_host;
   std::vector<uint32_t> B_host;
   std::vector<uint32_t> D_host;
   
   for (int i = 0; i < vec_size; i++) {
-    A_host.push_back(a);
-    B_host.push_back(b);
+    A_host.push_back(alt);
+  }
+
+
+  for (int i = 0; i < numWorkgroups; i++) {
+    B_host.push_back(0);
   }
 
   D_host.push_back(0);
@@ -268,15 +296,16 @@ void run(int a, int b, bool c) {
   ComputePassEncoder computePass = encoder.BeginComputePass();
   computePass.SetPipeline(pipeline);
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
-
-  //
-  computePass.DispatchWorkgroups(vec_size/wg_size, 1, 1);
-  //
+  computePass.DispatchWorkgroups(numWorkgroups, 1, 1);
   computePass.End();
 
   encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
-  CommandBuffer commands = encoder.Finish();
-  queue.Submit(1, &commands);
+  encoder.CopyBufferToBuffer(debugBuffer, 0, debugReadBuffer, 0, debug_size * 4);
+  wgpu::CommandBuffer computeCommands = encoder.Finish();
+
+
+  queue.Submit(2, &computeCommands); 
+
   WaitStatus waitStatus = WaitStatus::Unknown;
   MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
   waitStatus = instance.WaitAny(
@@ -286,42 +315,66 @@ void run(int a, int b, bool c) {
       }),
     UINT64_MAX);
   if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
-    std::cout << "Failed to map buffer" << std::endl;
+    std::cout << "Failed to map out[] buffer" << std::endl;
+    return;
+  }
+
+  WaitStatus waitStatusDebug = WaitStatus::Unknown;
+  MapAsyncStatus readStatusDebug = MapAsyncStatus::Unknown;
+  waitStatusDebug = instance.WaitAny(
+    debugReadBuffer.MapAsync(MapMode::Read, 0, debug_size * 4, CallbackMode::AllowSpontaneous,
+      [&readStatusDebug](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        readStatusDebug = status;
+      }),
+    UINT64_MAX);
+  if (waitStatusDebug != WaitStatus::Success || readStatusDebug != MapAsyncStatus::Success) {
+    std::cout << "Failed to map debug[] buffer" << std::endl;
     return;
   }
 
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
-  if (c) {
-    for (int i = 0; i < vec_size; i++) {
-      //assert(output[i] == 3);
-      std::cout << "output[" << i << "]: " << output[i] << std::endl;
+
+  const uint* debugOut = (const uint*)debugReadBuffer.GetConstMappedRange(0, debug_size * 4);
+  
+
+  if (checkResults) {
+    for (int i = 0; i < vec_size; i++) { // james print
+    //assert(output[i] == 3);
+    std::cout << "output[" << i << "]: " << output[i] << std::endl; 
     }
   }
+  std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
+  std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
+
+
   std::cout << "passed the test!" << std::endl;
   CReadBuffer.Unmap();
-  }
+  debugReadBuffer.Unmap();
+}
 
-int main(int argc, char* argv[]) {
+int main(int argc,  char* argv[]) {
   int c;
-  int a = 1;
-  int b = 2;
-  int w = 1;
-  bool cc = false;
-  while ((c = getopt (argc, argv, "a:b:w:c")) != -1)
+  while ((c = getopt (argc, argv, "ct:w:d:a:s:")) != -1)
     switch (c)
       {
       case 'a':
-        a = atoi(optarg);
+        alt = atoi(optarg);
         break;
-      case 'b':
-	      b = atoi(optarg);
-	      break;
-      case 'c':
-	      cc = true;
-	      break;
+	    case 's':
+        BATCH_SIZE = atoi(optarg);
+        break;
+	    case 't':
+        workgroupSize = atoi(optarg);
+        break;
       case 'w':
-	      w = atoi(optarg);
-	      break;
+        numWorkgroups = atoi(optarg);
+        break;
+      case 'c':
+        checkResults = true;
+        break;
+      case 'd':
+        deviceID = atoi(optarg);
+        break;
       case '?':
         if (optopt == 't' || optopt == 'w')
           std::cerr << "Option -" << optopt << "requires an argument\n";
@@ -332,29 +385,46 @@ int main(int argc, char* argv[]) {
         abort ();
       }
 
+  vec_size = numWorkgroups * workgroupSize * BATCH_SIZE;
 
   InstanceFeatures features;
+  const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
+  DawnTogglesDescriptor instanceTogglesDesc;
+  instanceTogglesDesc.enabledToggles = instanceEnabledToggles;
+  instanceTogglesDesc.enabledToggleCount = 1;
   features.timedWaitAnyEnable = true; // for some reason this defaults to false
   InstanceDescriptor descriptor;
+  descriptor.nextInChain = &instanceTogglesDesc;
   descriptor.features = features;
   instance = wgpu::CreateInstance(&descriptor);
+  
+
+  RequestAdapterOptions adapterOptions = {};
+    adapterOptions.backendType = wgpu::BackendType::Vulkan;  // Vulkan is a good option for Nvidia
+    if (deviceID == 0) {
+      adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;  // Prefer high performance (Discrete GPU)
+    }
+    adapterOptions.forceFallbackAdapter = WGPUBool(false);  // Do not force fallback adapter (Intel)
+
+
 
   RequestAdapterStatus adapterStatus;
   Adapter adapter;
   WaitStatus waitStatus = instance.WaitAny(
     instance.RequestAdapter(
-      nullptr, CallbackMode::AllowSpontaneous,
+      &adapterOptions, CallbackMode::AllowSpontaneous,
       [&adapterStatus, &adapter](RequestAdapterStatus s, Adapter _adapter,
                          StringView message) {
         adapterStatus = s;
         adapter = std::move(_adapter);
       }),
     UINT64_MAX);
-
   if (waitStatus != WaitStatus::Success || adapterStatus != RequestAdapterStatus::Success) {
     std::cout << "Failed to get adapter" << std::endl;
     return 1;
   }
+
+
 
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
@@ -364,10 +434,12 @@ int main(int argc, char* argv[]) {
         FeatureName::Subgroups,
         FeatureName::TimestampQuery,
     };
+    
 
+    // features enable checking
     for (uint i = 0; i < reqFeatures.size(); i++) {
-      if (adapter.HasFeature(reqFeatures[i]) == true) {
-        std::cout << "enabled feature:" << i << std::endl;
+      if (adapter.HasFeature(reqFeatures[i]) != true) {
+        std::cout << "tried to enable feature:" << i << std::endl;
       }
     }
 
@@ -381,7 +453,6 @@ int main(int argc, char* argv[]) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
                 << ", Message: " << message << "\n";
     });
-
   waitStatus = instance.WaitAny(
     adapter.RequestDevice(
       &deviceDescriptor, CallbackMode::AllowSpontaneous,
@@ -399,12 +470,29 @@ int main(int argc, char* argv[]) {
 
   AdapterInfo info;
   adapter.GetInfo(&info);
-  std::string deviceName = info.description.data;
-  std::cout << "using device: " << deviceName << std::endl;
+    std::cout << "VendorID: " << std::hex << info.vendorID << std::dec
+              << std::endl;
+    std::cout << "Vendor: " << std::string(info.vendor.data, info.vendor.length)
+              << std::endl;
+    std::cout << "Architecture: "
+              << std::string(info.architecture.data, info.architecture.length)
+              << std::endl;
+    std::cout << "DeviceID: " << std::hex << info.deviceID << std::dec
+              << std::endl;
+    std::cout << "Name: " << std::string(info.device.data, info.device.length)
+              << std::endl;
+    std::cout << "Driver description: "
+              << std::string(info.description.data, info.description.length)
+              << std::endl;
+    std::cout << "Backend "
+              << (info.backendType == wgpu::BackendType::Vulkan ? "vk"
+                                                                : "not vk")
+              << std::endl;  // LOL
   initBindGroupLayout();
   initComputePipeline();
   initBuffers();
   initBindGroup();
-  run(a, b, cc);
+  run();
+
   return 0;
 }
