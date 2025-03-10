@@ -14,6 +14,8 @@ Buffer BBuffer;
 Buffer CBuffer;
 Buffer CReadBuffer;
 Buffer DBuffer;
+Buffer debugBuffer;
+Buffer debugReadBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
 
@@ -24,6 +26,7 @@ int deviceID = 0;
 int alt = 1;
 bool checkResults = false;
 int vec_size;
+int debug_size = 2;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -91,6 +94,13 @@ void initBindGroupLayout() {
   DEntry.visibility = ShaderStage::Compute;
   bindings.push_back(DEntry);
 
+  // debug
+  BindGroupLayoutEntry debugEntry;
+  debugEntry.binding = 4;
+  debugEntry.buffer.type = BufferBindingType::Storage;
+  debugEntry.visibility = ShaderStage::Compute;
+  bindings.push_back(debugEntry);
+
   BindGroupLayoutDescriptor bindGroupLayoutDesc;
   bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
   bindGroupLayoutDesc.entries = bindings.data();
@@ -112,7 +122,7 @@ void initBindGroup() {
   BEntry.binding = 1;
   BEntry.buffer = BBuffer;
   BEntry.offset = 0;
-  BEntry.size = vec_size * sizeof(int);
+  BEntry.size = numWorkgroups * sizeof(int);
   entries.push_back(BEntry);
 
   BindGroupEntry CEntry;
@@ -122,13 +132,22 @@ void initBindGroup() {
   CEntry.size = vec_size * sizeof(int);
   entries.push_back(CEntry);
 
-  // atomic buffer
+  // part_id
   BindGroupEntry DEntry;
   DEntry.binding = 3;
   DEntry.buffer = DBuffer;
   DEntry.offset = 0;
   DEntry.size = sizeof(int);
   entries.push_back(DEntry);
+  
+  // debug
+  BindGroupEntry debugEntry;
+  debugEntry.binding = 4;
+  debugEntry.buffer = debugBuffer;
+  debugEntry.offset = 0;
+  debugEntry.size = sizeof(int) * debug_size;
+  entries.push_back(debugEntry);
+
 
   BindGroupDescriptor bindGroupDesc;
   bindGroupDesc.layout = bindGroupLayout;
@@ -214,7 +233,7 @@ void initBuffers() {
 
   BufferDescriptor BBufDesc;
   BBufDesc.mappedAtCreation = false;
-  BBufDesc.size = vec_size * sizeof(int);
+  BBufDesc.size = numWorkgroups * sizeof(int);
   BBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
   BBuffer = device.CreateBuffer(&BBufDesc);
 
@@ -230,12 +249,25 @@ void initBuffers() {
   CReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
   CReadBuffer = device.CreateBuffer(&CReadBufDesc);
 
-  // atomic buffer 
+  // part_id
   BufferDescriptor DBufDesc;
   DBufDesc.mappedAtCreation = false;
   DBufDesc.size = sizeof(int);
   DBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
   DBuffer = device.CreateBuffer(&DBufDesc);
+
+  // debuf buffer in 
+  BufferDescriptor debugBufDesc;
+  debugBufDesc.mappedAtCreation = false;
+  debugBufDesc.size = sizeof(int) * debug_size;
+  debugBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst | BufferUsage::CopySrc;
+  debugBuffer = device.CreateBuffer(&debugBufDesc);
+
+  BufferDescriptor debugReadBufDesc;
+  debugReadBufDesc.mappedAtCreation = false;
+  debugReadBufDesc.size = debug_size * sizeof(int);
+  debugReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
+  debugReadBuffer = device.CreateBuffer(&debugReadBufDesc);
 }
 
 
@@ -247,6 +279,10 @@ void run() {
   
   for (int i = 0; i < vec_size; i++) {
     A_host.push_back(alt);
+  }
+
+
+  for (int i = 0; i < numWorkgroups; i++) {
     B_host.push_back(0);
   }
 
@@ -264,8 +300,10 @@ void run() {
   computePass.End();
 
   encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
-  CommandBuffer commands = encoder.Finish();
-  queue.Submit(1, &commands);
+  encoder.CopyBufferToBuffer(debugBuffer, 0, debugReadBuffer, 0, debug_size * 4);
+  wgpu::CommandBuffer computeCommands = encoder.Finish();
+
+  queue.Submit(1, &computeCommands); 
 
   WaitStatus waitStatus = WaitStatus::Unknown;
   MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
@@ -276,20 +314,46 @@ void run() {
       }),
     UINT64_MAX);
   if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
-    std::cout << "Failed to map buffer" << std::endl;
+    std::cout << "Failed to map out[] buffer" << std::endl;
+    return;
+  }
+
+  WaitStatus waitStatusDebug = WaitStatus::Unknown;
+  MapAsyncStatus readStatusDebug = MapAsyncStatus::Unknown;
+  waitStatusDebug = instance.WaitAny(
+    debugReadBuffer.MapAsync(MapMode::Read, 0, debug_size * 4, CallbackMode::AllowSpontaneous,
+      [&readStatusDebug](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        readStatusDebug = status;
+      }),
+    UINT64_MAX);
+  if (waitStatusDebug != WaitStatus::Success || readStatusDebug != MapAsyncStatus::Success) {
+    std::cout << "Failed to map debug[] buffer" << std::endl;
     return;
   }
 
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
 
+  const uint* debugOut = (const uint*)debugReadBuffer.GetConstMappedRange(0, debug_size * 4);
+  
+
   if (checkResults) {
-    for (int i = 0; i < vec_size; i++) { // james print
-    //assert(output[i] == 3);
-    std::cout << "output[" << i << "]: " << output[i] << std::endl; 
+    for (int i = 1; i < vec_size; i++) { // james print
+    std::cout << "output[" << i - 1 << "]: " << output[i - 1] << std::endl; 
+    assert(output[i - 1] == i * alt);
+    
     }
   }
+
+  
+  std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
+  assert(output[vec_size - 1] == vec_size * alt);
+  std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
+  std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
+
+
   std::cout << "passed the test!" << std::endl;
   CReadBuffer.Unmap();
+  debugReadBuffer.Unmap();
 }
 
 int main(int argc,  char* argv[]) {
@@ -340,12 +404,9 @@ int main(int argc,  char* argv[]) {
   
 
   RequestAdapterOptions adapterOptions = {};
-    adapterOptions.backendType = wgpu::BackendType::Vulkan;  // Vulkan is a good option for Nvidia
     if (deviceID == 0) {
       adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;  // Prefer high performance (Discrete GPU)
     }
-    adapterOptions.forceFallbackAdapter = WGPUBool(false);  // Do not force fallback adapter (Intel)
-
 
 
   RequestAdapterStatus adapterStatus;

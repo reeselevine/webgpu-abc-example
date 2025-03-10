@@ -2,10 +2,11 @@
 @group(0) @binding(1) var<storage, read_write> prefix_states: array<atomic<u32>>;
 @group(0) @binding(2) var<storage, read_write> out: array<u32>;
 @group(0) @binding(3) var<storage, read_write> part: atomic<u32>;
+@group(0) @binding(4) var<storage, read_write> debug: array<u32>;
 
 const BATCH_SIZE = 4;
-const FLG_A = 1u;
-const FLG_P = 2u;
+const FLG_A = 1;
+const FLG_P = 2;
 const ANTI_MASK = 30u;
 const MASK_ = ~(3u << ANTI_MASK);
 
@@ -95,67 +96,37 @@ fn calc_lookback_id(
   }
   workgroupBarrier();
 
-  // if (part_id != 0 && sid == 0) {
-  //     var lookback_id = calc_lookback_id(subgroup_invocation_id, subgroup_size, i32(part_id), i32(subgroup_size - subgroup_invocation_id));
-  //     var done: bool = false;
-  //     // spin and lookback until full prefix is set
-  //     while (!done) {
-  //       var flag: u32;
-  //       var agg: u32;
-  //       if (lookback_id >= 0) {
-  //         let flagg = atomicLoad(&prefix_states[lookback_id]);
-  //         agg = flagg & 0x3FFFFFFF;
-  //         flag = flagg >> ANTI_MASK; // can also just give flag as 1 if lookbackid in this thread is -1 
-  //       }else{
-  //         agg = 0;
-  //         flag = 2;
-  //       }
 
-  //       // @TODO this is necesary
-  //       // sub_group_barrier(CLK_LOCAL_MEM_FENCE);
-        
-  //       // check if all threads see a valid get_local_id(0) prefix
-  //       if (subgroupAll(flag == 1u)) {
-  //         var local_prefix: u32 = 0;
-  //         // check if any thread has an inclusive prefix
-  //         if (subgroupAny(flag == FLG_P)) {
-  //           // we will terminate after this iteration
-  //           done = true;
-  //           // we want to find the highest thread with an inclusive prefix
-  //           let inclusive = select(subgroup_invocation_id, 0, flag == FLG_P);
-  //           // broadcast to  all threads in the subgroup the highest thread with inclusive prefix
-  //           let max_inclusive = subgroupMax(inclusive);
-  //           // highest thread with inclusive prefix loads it
-  //           if (subgroup_invocation_id == max_inclusive) {
-  //             local_prefix = select( 0u, agg, lookback_id < 0,);
-  //           // threads with higher ids load exclusive prefix
-  //           } else if (max_inclusive < subgroup_invocation_id) {
-  //             local_prefix = agg;
-  //           }
-  //         // if no thread has inclusive prefix, all threads load exclusive prefix
-  //         } else {
-  //           // every thread looks back another partition
-  //           local_prefix = agg;
-  //           lookback_id = calc_lookback_id(subgroup_invocation_id, subgroup_size, lookback_id, i32(subgroup_size));
-  //         }
-  //         var scanned_prefix : u32 = subgroupInclusiveAdd(local_prefix);
+  if (part_id == 0 && local_id.x == 0) {
+    debug[0] = atomicLoad(&prefix_states[part_id]) & 0x3FFFFFFF;
+  }
 
-  //         // last thread has the full prefix, update the workgroup level exclusive prefix
-  //         if (subgroup_invocation_id == subgroup_size - 1) {
-  //           exclusive_prefix += scanned_prefix;
-  //         }
-  //       }
-  //     }
+//   if (part_id == 1 && local_id.x == 0) {
+//     debug[1] = atomicLoad(&prefix_states[0]) >> ANTI_MASK;
+//   }
 
-  //     // finally last thread in subgroup updates this workgroup's prefix/flag
-  //     if (subgroup_invocation_id == subgroup_size - 1) {
-  //       atomicStore(&prefix_states[part_id], (FLG_P << ANTI_MASK) | ((exclusive_prefix + scratch[wg_size - 1]) & MASK_));
-  //     }
-  //   }
+  if (part_id != 0 && local_id.x == 0) {
+    var lookback_id = part_id - 1;
+    // spin and lookback until full prefix is set
+    while (lookback_id >= 0) {
+      let flagg = atomicLoad(&prefix_states[lookback_id]);     
+      let agg = flagg & 0x3FFFFFFF;
+      let flag = flagg >> ANTI_MASK;
 
+      if (flag == FLG_P) {
+        exclusive_prefix += agg;
+        break;
+      } else if (flag == FLG_A) {
+        exclusive_prefix += agg;
+        lookback_id -= 1;
+      }
+    }
+    atomicStore(&prefix_states[part_id], (FLG_P << ANTI_MASK) | ((exclusive_prefix + scratch[wg_size - 1]) & MASK_));
+  }
 
+  workgroupBarrier();  
 
-  var total_exclusive_prefix : u32 = 0;
+  var total_exclusive_prefix : u32 = exclusive_prefix;
 
   if (local_id.x != 0) {
     total_exclusive_prefix += scratch[local_id.x - 1];
@@ -164,4 +135,7 @@ fn calc_lookback_id(
   for (var i : u32 = 0; i < BATCH_SIZE; i++) {
     out[my_id + i] = values[i] + total_exclusive_prefix; 
   }
+
+
+
 }
