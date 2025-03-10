@@ -5,8 +5,8 @@
 @group(0) @binding(4) var<storage, read_write> debug: array<u32>;
 
 const BATCH_SIZE = 4;
-const FLG_A = 1u;
-const FLG_P = 2u;
+const FLG_A = 1;
+const FLG_P = 2;
 const ANTI_MASK = 30u;
 const MASK_ = ~(3u << ANTI_MASK);
 
@@ -98,12 +98,12 @@ fn calc_lookback_id(
 
 
   if (part_id == 0 && local_id.x == 0) {
-    debug[0] = 1;
+    debug[0] = atomicLoad(&prefix_states[part_id]) & 0x3FFFFFFF;
   }
 
-  if (part_id == 1 && local_id.x == 0) {
-    debug[1] = 2;
-  }
+//   if (part_id == 1 && local_id.x == 0) {
+//     debug[1] = atomicLoad(&prefix_states[0]) >> ANTI_MASK;
+//   }
 
   if (part_id != 0 && local_id.x == 0) {
     var lookback_id = part_id - 1;
@@ -114,7 +114,7 @@ fn calc_lookback_id(
       let flag = flagg >> ANTI_MASK;
 
       if (flag == FLG_P) {
-        exclusive_prefix += agg; 
+        exclusive_prefix += agg;
         break;
       } else if (flag == FLG_A) {
         exclusive_prefix += agg;
@@ -124,6 +124,7 @@ fn calc_lookback_id(
     atomicStore(&prefix_states[part_id], (FLG_P << ANTI_MASK) | ((exclusive_prefix + scratch[wg_size - 1]) & MASK_));
   }
 
+  workgroupBarrier();  
 
   var total_exclusive_prefix : u32 = exclusive_prefix;
 

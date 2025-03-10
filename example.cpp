@@ -260,7 +260,7 @@ void initBuffers() {
   BufferDescriptor debugBufDesc;
   debugBufDesc.mappedAtCreation = false;
   debugBufDesc.size = sizeof(int) * debug_size;
-  debugBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst;
+  debugBufDesc.usage = BufferUsage::Storage | BufferUsage::CopyDst | BufferUsage::CopySrc;
   debugBuffer = device.CreateBuffer(&debugBufDesc);
 
   BufferDescriptor debugReadBufDesc;
@@ -303,8 +303,7 @@ void run() {
   encoder.CopyBufferToBuffer(debugBuffer, 0, debugReadBuffer, 0, debug_size * 4);
   wgpu::CommandBuffer computeCommands = encoder.Finish();
 
-
-  queue.Submit(2, &computeCommands); 
+  queue.Submit(1, &computeCommands); 
 
   WaitStatus waitStatus = WaitStatus::Unknown;
   MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
@@ -338,11 +337,16 @@ void run() {
   
 
   if (checkResults) {
-    for (int i = 0; i < vec_size; i++) { // james print
-    //assert(output[i] == 3);
-    std::cout << "output[" << i << "]: " << output[i] << std::endl; 
+    for (int i = 1; i < vec_size; i++) { // james print
+    std::cout << "output[" << i - 1 << "]: " << output[i - 1] << std::endl; 
+    assert(output[i - 1] == i * alt);
+    
     }
   }
+
+  
+  std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
+  assert(output[vec_size - 1] == vec_size * alt);
   std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
   std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
 
@@ -400,12 +404,9 @@ int main(int argc,  char* argv[]) {
   
 
   RequestAdapterOptions adapterOptions = {};
-    adapterOptions.backendType = wgpu::BackendType::Vulkan;  // Vulkan is a good option for Nvidia
     if (deviceID == 0) {
       adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;  // Prefer high performance (Discrete GPU)
     }
-    adapterOptions.forceFallbackAdapter = WGPUBool(false);  // Do not force fallback adapter (Intel)
-
 
 
   RequestAdapterStatus adapterStatus;
