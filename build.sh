@@ -4,4 +4,4 @@ mkdir build
 cd build
 cmake -GNinja ../
 ninja
-cp ../vec_add.wgsl .
+cp ../prefix-sum.wgsl .

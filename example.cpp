@@ -16,8 +16,11 @@ Buffer CReadBuffer;
 Buffer DBuffer;
 Buffer debugBuffer;
 Buffer debugReadBuffer;
+Buffer TimestampResolveBuffer;
+Buffer TimestampReadBuffer;
 BindGroup bindGroup;
 BindGroupLayout bindGroupLayout;
+ComputePassTimestampWrites timestampWrites;
 
 int workgroupSize = 128;
 int numWorkgroups = 2;
@@ -165,7 +168,7 @@ void initComputePipeline() {
   PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
 
   // Load compute shader
-  ShaderModule shaderModule = loadShader("vec_add.wgsl");
+  ShaderModule shaderModule = loadShader("prefix-sum.wgsl");
   WaitStatus waitStatus = WaitStatus::Unknown;
   wgpu::CompilationInfoRequestStatus compilationStatus = CompilationInfoRequestStatus::Unknown;
   WGPUCompilationInfo _compilationInfo = {};
@@ -217,7 +220,7 @@ void initComputePipeline() {
   constants[0].value = workgroupSize;
   computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
   computePipelineDesc.compute.constants = constants.data();
-  StringView entryPointSV = makeStringView("vec_add");
+  StringView entryPointSV = makeStringView("prefix_sum");
   computePipelineDesc.compute.entryPoint = entryPointSV;
   computePipelineDesc.compute.module = shaderModule;
   computePipelineDesc.layout = pipelineLayout;
@@ -268,6 +271,18 @@ void initBuffers() {
   debugReadBufDesc.size = debug_size * sizeof(int);
   debugReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
   debugReadBuffer = device.CreateBuffer(&debugReadBufDesc);
+
+  BufferDescriptor TimestampResolveBufDesc;
+  TimestampResolveBufDesc.mappedAtCreation = false;
+  TimestampResolveBufDesc.size = 2 * sizeof(u_long);
+  TimestampResolveBufDesc.usage = BufferUsage::QueryResolve | BufferUsage::CopySrc;
+  TimestampResolveBuffer = device.CreateBuffer(&TimestampResolveBufDesc);
+
+  BufferDescriptor TimestampReadBufDesc;
+  TimestampReadBufDesc.mappedAtCreation = false;
+  TimestampReadBufDesc.size = 2 * sizeof(u_long);
+  TimestampReadBufDesc.usage = BufferUsage::CopyDst | BufferUsage::MapRead;
+  TimestampReadBuffer = device.CreateBuffer(&TimestampReadBufDesc);
 }
 
 
@@ -293,7 +308,17 @@ void run() {
   queue.WriteBuffer(DBuffer, 0, D_host.data(), D_host.size() * sizeof(uint32_t));
 
   CommandEncoder encoder = device.CreateCommandEncoder();
-  ComputePassEncoder computePass = encoder.BeginComputePass();
+
+  QuerySetDescriptor querySetDesc;
+  querySetDesc.type = QueryType::Timestamp;
+  querySetDesc.count = 2;
+  timestampWrites.querySet = device.CreateQuerySet(&querySetDesc);
+  timestampWrites.beginningOfPassWriteIndex = 0;
+  timestampWrites.endOfPassWriteIndex = 1;
+
+  ComputePassDescriptor computePassDesc;
+  computePassDesc.timestampWrites = &timestampWrites;
+  ComputePassEncoder computePass = encoder.BeginComputePass(&computePassDesc);
   computePass.SetPipeline(pipeline);
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
   computePass.DispatchWorkgroups(numWorkgroups, 1, 1);
@@ -301,9 +326,26 @@ void run() {
 
   encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
   encoder.CopyBufferToBuffer(debugBuffer, 0, debugReadBuffer, 0, debug_size * 4);
+  encoder.ResolveQuerySet(timestampWrites.querySet, 0, 2, TimestampResolveBuffer, 0);
+  encoder.CopyBufferToBuffer(TimestampResolveBuffer, 0, TimestampReadBuffer, 0, 2 * sizeof(u_long));
   wgpu::CommandBuffer computeCommands = encoder.Finish();
 
-  queue.Submit(1, &computeCommands); 
+  queue.Submit(1, &computeCommands);
+
+  WaitStatus queueWaitStatus = WaitStatus::Unknown;
+  QueueWorkDoneStatus workDoneStatus = QueueWorkDoneStatus::Unknown;
+
+  queueWaitStatus = instance.WaitAny(
+    queue.OnSubmittedWorkDone(CallbackMode::AllowSpontaneous,
+      [&workDoneStatus](QueueWorkDoneStatus status) {
+        workDoneStatus = status;
+      }),
+    UINT64_MAX);
+  
+  if (queueWaitStatus != WaitStatus::Success || workDoneStatus != QueueWorkDoneStatus::Success) {
+    std::cout << "Failed to submit work" << std::endl;
+    return;
+  }
 
   WaitStatus waitStatus = WaitStatus::Unknown;
   MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
@@ -331,6 +373,25 @@ void run() {
     return;
   }
 
+    waitStatus = instance.WaitAny(
+    TimestampReadBuffer.MapAsync(MapMode::Read, 0, 2 * sizeof(u_long), CallbackMode::AllowSpontaneous,
+      [&readStatus](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        readStatus = status;
+      }),
+    UINT64_MAX);
+  if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
+    std::cout << "Failed to map timestamp read buffer" << std::endl;
+    return;
+  }
+
+  const u_long* timestampOutput = (const u_long*)TimestampReadBuffer.GetConstMappedRange(0, 2 * sizeof(u_long));
+  
+  const double time = timestampOutput[1] - timestampOutput[0];
+  
+
+  ///std::cout << "Beginning: " << timestampOutput[0] << std::endl;
+  //std::cout << "End: " << timestampOutput[1] << std::endl;
+
   const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
 
   const uint* debugOut = (const uint*)debugReadBuffer.GetConstMappedRange(0, debug_size * 4);
@@ -345,15 +406,18 @@ void run() {
   }
 
   
-  std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
+  //std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
   assert(output[vec_size - 1] == vec_size * alt);
   std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
   std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
 
 
-  std::cout << "passed the test!" << std::endl;
+  //std::cout << "GPU Diff: " << time << " ns\n";
+  std::cout << "GPU Time: " << time / 1000000 << " ms\n";
+  std::cout << "Throughput: " << (((long) vec_size) * 4 * 2)/(time) << " GBPS\n";
   CReadBuffer.Unmap();
   debugReadBuffer.Unmap();
+  TimestampReadBuffer.Unmap();
 }
 
 int main(int argc,  char* argv[]) {
@@ -401,6 +465,11 @@ int main(int argc,  char* argv[]) {
   descriptor.nextInChain = &instanceTogglesDesc;
   descriptor.features = features;
   instance = wgpu::CreateInstance(&descriptor);
+
+  const char* const adapterEnabledToggles[] = {"internal_compute_timestamp_queries"};
+  DawnTogglesDescriptor adapterTogglesDesc;
+  adapterTogglesDesc.enabledToggles = adapterEnabledToggles;
+  adapterTogglesDesc.enabledToggleCount = 1;
   
 
   RequestAdapterOptions adapterOptions = {};
@@ -425,15 +494,28 @@ int main(int argc,  char* argv[]) {
     return 1;
   }
 
-
+  // const char* const deviceEnabledToggles[] = {"metal_serialize_timestamp_generation_and_resolution"};
+  // DawnTogglesDescriptor deviceTogglesDesc;
+  // deviceTogglesDesc.enabledToggles = deviceEnabledToggles;
+  // deviceTogglesDesc.enabledToggleCount = 1;
 
   RequestDeviceStatus deviceStatus;
   Device deviceResult;
   DeviceDescriptor deviceDescriptor{};
 
+  const char* const deviceDisabledToggles[] = {"timestamp_quantization"};
+  const char* const deviceEnabledToggles[] = {"use_tint_ir", "dump_shaders"};
+  DawnTogglesDescriptor deviceTogglesDesc;
+  deviceTogglesDesc.disabledToggles = deviceDisabledToggles;
+  deviceTogglesDesc.disabledToggleCount = 1;
+  deviceTogglesDesc.enabledToggles = deviceEnabledToggles;
+  deviceTogglesDesc.enabledToggleCount = 2;
+
+  deviceDescriptor.nextInChain = &deviceTogglesDesc;
+
     std::vector<FeatureName> reqFeatures = {
         FeatureName::Subgroups,
-        FeatureName::TimestampQuery,
+        FeatureName::TimestampQuery
     };
     
 
@@ -452,6 +534,10 @@ int main(int argc,  char* argv[]) {
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
     [](const Device& device, DeviceLostReason reason, const char* message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
+                << ", Message: " << message << "\n";
+    });
+  deviceDescriptor.SetUncapturedErrorCallback([](const Device& device, ErrorType reason, const char* message) {
+      std::cout << "Device error! Reason: " << static_cast<int>(reason)
                 << ", Message: " << message << "\n";
     });
   waitStatus = instance.WaitAny(
