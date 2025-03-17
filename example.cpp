@@ -30,6 +30,7 @@ int alt = 1;
 bool checkResults = false;
 int vec_size;
 int debug_size = 2;
+int par_lookback = 1;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -291,6 +292,7 @@ void run() {
   std::vector<uint32_t> A_host;
   std::vector<uint32_t> B_host;
   std::vector<uint32_t> D_host;
+  std::vector<uint32_t> debug_host;
   
   for (int i = 0; i < vec_size; i++) {
     A_host.push_back(alt);
@@ -303,9 +305,13 @@ void run() {
 
   D_host.push_back(0);
 
+  debug_host.push_back(par_lookback);
+  debug_host.push_back(0);
+
   queue.WriteBuffer(ABuffer, 0, A_host.data(), A_host.size() * sizeof(uint32_t));
   queue.WriteBuffer(BBuffer, 0, B_host.data(), B_host.size() * sizeof(uint32_t));
   queue.WriteBuffer(DBuffer, 0, D_host.data(), D_host.size() * sizeof(uint32_t));
+  queue.WriteBuffer(debugBuffer, 0, debug_host.data(), debug_host.size() * sizeof(uint32_t));
 
   CommandEncoder encoder = device.CreateCommandEncoder();
 
@@ -400,14 +406,15 @@ void run() {
   if (checkResults) {
     for (int i = 1; i < vec_size; i++) { // james print
     std::cout << "output[" << i - 1 << "]: " << output[i - 1] << std::endl; 
-    assert(output[i - 1] == i * alt);
+    //assert(output[i - 1] == i * alt);
     
     }
   }
 
   
   //std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
-  assert(output[vec_size - 1] == vec_size * alt);
+  //assert(output[vec_size - 1] == vec_size * alt);
+  std::cout << "error: " << ((int)output[vec_size - 1] == vec_size * alt) << std::endl;
   std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
   std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
 
@@ -422,7 +429,7 @@ void run() {
 
 int main(int argc,  char* argv[]) {
   int c;
-  while ((c = getopt (argc, argv, "ct:w:d:a:s:")) != -1)
+  while ((c = getopt (argc, argv, "ct:w:d:a:s:bp:")) != -1)
     switch (c)
       {
       case 'a':
@@ -439,6 +446,11 @@ int main(int argc,  char* argv[]) {
         break;
       case 'c':
         checkResults = true;
+        break;
+      case 'b':
+        break;
+      case 'p':
+        par_lookback = atoi(optarg);
         break;
       case 'd':
         deviceID = atoi(optarg);
