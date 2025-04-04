@@ -6,6 +6,8 @@
 
 using namespace wgpu;
 
+const char* FeatureNameToString(wgpu::FeatureName feature);
+
 Device device;
 Instance instance;
 ComputePipeline pipeline;
@@ -413,7 +415,7 @@ void run() {
 
   
   //std::cout << "output[" << vec_size - 1 << "]: " << output[vec_size - 1] << std::endl;
-  //assert(output[vec_size - 1] == vec_size * alt);
+  assert(output[vec_size - 1] == vec_size * alt);
   std::cout << "error: " << ((int)output[vec_size - 1] == vec_size * alt) << std::endl;
   std::cout << "debug[" << 0 << "]: " << debugOut[0] << std::endl;
   std::cout << "debug[" << 1 << "]: " << debugOut[1] << std::endl;
@@ -425,6 +427,18 @@ void run() {
   CReadBuffer.Unmap();
   debugReadBuffer.Unmap();
   TimestampReadBuffer.Unmap();
+}
+
+
+
+void PrintFeatures(const wgpu::Adapter& adapter) {
+    wgpu::SupportedFeatures features;
+    adapter.GetFeatures(&features);
+
+    std::cout << "Supported features:\n";
+    for (size_t i = 0; i < features.featureCount; ++i) {
+        std::cout << "- " << FeatureNameToString(features.features[i]) << "\n";
+    }
 }
 
 int main(int argc,  char* argv[]) {
@@ -465,7 +479,7 @@ int main(int argc,  char* argv[]) {
         abort ();
       }
 
-  vec_size = numWorkgroups * workgroupSize * BATCH_SIZE;
+  vec_size = numWorkgroups * workgroupSize * BATCH_SIZE * 4;
 
   InstanceFeatures features;
   const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
@@ -486,7 +500,10 @@ int main(int argc,  char* argv[]) {
 
   RequestAdapterOptions adapterOptions = {};
     if (deviceID == 0) {
-      adapterOptions.powerPreference = wgpu::PowerPreference::HighPerformance;  // Prefer high performance (Discrete GPU)
+      adapterOptions.powerPreference = wgpu::PowerPreference::LowPower;  // Prefer high performance (Discrete GPU)
+      //adapterOptions.featureLevel = FeatureLevel::Compatibility;
+
+      //adapterOptions.forceFallbackAdapter = true;
     }
 
 
@@ -505,7 +522,7 @@ int main(int argc,  char* argv[]) {
     std::cout << "Failed to get adapter" << std::endl;
     return 1;
   }
-
+  PrintFeatures(adapter);
   // const char* const deviceEnabledToggles[] = {"metal_serialize_timestamp_generation_and_resolution"};
   // DawnTogglesDescriptor deviceTogglesDesc;
   // deviceTogglesDesc.enabledToggles = deviceEnabledToggles;
@@ -594,4 +611,81 @@ int main(int argc,  char* argv[]) {
   run();
 
   return 0;
+}
+
+const char* FeatureNameToString(wgpu::FeatureName feature) {
+    switch (feature) {
+        case wgpu::FeatureName::DepthClipControl: return "DepthClipControl";
+        case wgpu::FeatureName::Depth32FloatStencil8: return "Depth32FloatStencil8";
+        case wgpu::FeatureName::TimestampQuery: return "TimestampQuery";
+        case wgpu::FeatureName::TextureCompressionBC: return "TextureCompressionBC";
+        case wgpu::FeatureName::TextureCompressionETC2: return "TextureCompressionETC2";
+        case wgpu::FeatureName::TextureCompressionASTC: return "TextureCompressionASTC";
+        case wgpu::FeatureName::IndirectFirstInstance: return "IndirectFirstInstance";
+        case wgpu::FeatureName::ShaderF16: return "ShaderF16";
+        case wgpu::FeatureName::RG11B10UfloatRenderable: return "RG11B10UfloatRenderable";
+        case wgpu::FeatureName::BGRA8UnormStorage: return "BGRA8UnormStorage";
+        case wgpu::FeatureName::Float32Filterable: return "Float32Filterable";
+        case wgpu::FeatureName::Float32Blendable: return "Float32Blendable";
+        case wgpu::FeatureName::Subgroups: return "Subgroups";
+        case wgpu::FeatureName::SubgroupsF16: return "SubgroupsF16";
+        case wgpu::FeatureName::DawnInternalUsages: return "DawnInternalUsages";
+        case wgpu::FeatureName::DawnMultiPlanarFormats: return "DawnMultiPlanarFormats";
+        case wgpu::FeatureName::DawnNative: return "DawnNative";
+        case wgpu::FeatureName::ChromiumExperimentalTimestampQueryInsidePasses: return "ChromiumExperimentalTimestampQueryInsidePasses";
+        case wgpu::FeatureName::ImplicitDeviceSynchronization: return "ImplicitDeviceSynchronization";
+        case wgpu::FeatureName::ChromiumExperimentalImmediateData: return "ChromiumExperimentalImmediateData";
+        case wgpu::FeatureName::TransientAttachments: return "TransientAttachments";
+        case wgpu::FeatureName::MSAARenderToSingleSampled: return "MSAARenderToSingleSampled";
+        case wgpu::FeatureName::DualSourceBlending: return "DualSourceBlending";
+        case wgpu::FeatureName::D3D11MultithreadProtected: return "D3D11MultithreadProtected";
+        case wgpu::FeatureName::ANGLETextureSharing: return "ANGLETextureSharing";
+        case wgpu::FeatureName::PixelLocalStorageCoherent: return "PixelLocalStorageCoherent";
+        case wgpu::FeatureName::PixelLocalStorageNonCoherent: return "PixelLocalStorageNonCoherent";
+        case wgpu::FeatureName::Unorm16TextureFormats: return "Unorm16TextureFormats";
+        case wgpu::FeatureName::Snorm16TextureFormats: return "Snorm16TextureFormats";
+        case wgpu::FeatureName::MultiPlanarFormatExtendedUsages: return "MultiPlanarFormatExtendedUsages";
+        case wgpu::FeatureName::MultiPlanarFormatP010: return "MultiPlanarFormatP010";
+        case wgpu::FeatureName::HostMappedPointer: return "HostMappedPointer";
+        case wgpu::FeatureName::MultiPlanarRenderTargets: return "MultiPlanarRenderTargets";
+        case wgpu::FeatureName::MultiPlanarFormatNv12a: return "MultiPlanarFormatNv12a";
+        case wgpu::FeatureName::FramebufferFetch: return "FramebufferFetch";
+        case wgpu::FeatureName::BufferMapExtendedUsages: return "BufferMapExtendedUsages";
+        case wgpu::FeatureName::AdapterPropertiesMemoryHeaps: return "AdapterPropertiesMemoryHeaps";
+        case wgpu::FeatureName::AdapterPropertiesD3D: return "AdapterPropertiesD3D";
+        case wgpu::FeatureName::AdapterPropertiesVk: return "AdapterPropertiesVk";
+        case wgpu::FeatureName::R8UnormStorage: return "R8UnormStorage";
+        case wgpu::FeatureName::FormatCapabilities: return "FormatCapabilities";
+        case wgpu::FeatureName::DrmFormatCapabilities: return "DrmFormatCapabilities";
+        case wgpu::FeatureName::Norm16TextureFormats: return "Norm16TextureFormats";
+        case wgpu::FeatureName::MultiPlanarFormatNv16: return "MultiPlanarFormatNv16";
+        case wgpu::FeatureName::MultiPlanarFormatNv24: return "MultiPlanarFormatNv24";
+        case wgpu::FeatureName::MultiPlanarFormatP210: return "MultiPlanarFormatP210";
+        case wgpu::FeatureName::MultiPlanarFormatP410: return "MultiPlanarFormatP410";
+        case wgpu::FeatureName::SharedTextureMemoryVkDedicatedAllocation: return "SharedTextureMemoryVkDedicatedAllocation";
+        case wgpu::FeatureName::SharedTextureMemoryAHardwareBuffer: return "SharedTextureMemoryAHardwareBuffer";
+        case wgpu::FeatureName::SharedTextureMemoryDmaBuf: return "SharedTextureMemoryDmaBuf";
+        case wgpu::FeatureName::SharedTextureMemoryOpaqueFD: return "SharedTextureMemoryOpaqueFD";
+        case wgpu::FeatureName::SharedTextureMemoryZirconHandle: return "SharedTextureMemoryZirconHandle";
+        case wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle: return "SharedTextureMemoryDXGISharedHandle";
+        case wgpu::FeatureName::SharedTextureMemoryD3D11Texture2D: return "SharedTextureMemoryD3D11Texture2D";
+        case wgpu::FeatureName::SharedTextureMemoryIOSurface: return "SharedTextureMemoryIOSurface";
+        case wgpu::FeatureName::SharedTextureMemoryEGLImage: return "SharedTextureMemoryEGLImage";
+        case wgpu::FeatureName::SharedFenceVkSemaphoreOpaqueFD: return "SharedFenceVkSemaphoreOpaqueFD";
+        case wgpu::FeatureName::SharedFenceSyncFD: return "SharedFenceSyncFD";
+        case wgpu::FeatureName::SharedFenceVkSemaphoreZirconHandle: return "SharedFenceVkSemaphoreZirconHandle";
+        case wgpu::FeatureName::SharedFenceDXGISharedHandle: return "SharedFenceDXGISharedHandle";
+        case wgpu::FeatureName::SharedFenceMTLSharedEvent: return "SharedFenceMTLSharedEvent";
+        case wgpu::FeatureName::SharedBufferMemoryD3D12Resource: return "SharedBufferMemoryD3D12Resource";
+        case wgpu::FeatureName::StaticSamplers: return "StaticSamplers";
+        case wgpu::FeatureName::YCbCrVulkanSamplers: return "YCbCrVulkanSamplers";
+        case wgpu::FeatureName::ShaderModuleCompilationOptions: return "ShaderModuleCompilationOptions";
+        case wgpu::FeatureName::DawnLoadResolveTexture: return "DawnLoadResolveTexture";
+        case wgpu::FeatureName::DawnPartialLoadResolveTexture: return "DawnPartialLoadResolveTexture";
+        case wgpu::FeatureName::MultiDrawIndirect: return "MultiDrawIndirect";
+        case wgpu::FeatureName::ClipDistances: return "ClipDistances";
+        case wgpu::FeatureName::DawnTexelCopyBufferRowAlignment: return "DawnTexelCopyBufferRowAlignment";
+        case wgpu::FeatureName::FlexibleTextureViews: return "FlexibleTextureViews";
+        default: return "Unknown Feature";
+    }
 }

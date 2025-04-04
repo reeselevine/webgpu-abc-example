@@ -1,6 +1,6 @@
-@group(0) @binding(0) var<storage, read_write> in: array<u32>;
+@group(0) @binding(0) var<storage, read_write> in: array<vec4<u32>>;
 @group(0) @binding(1) var<storage, read_write> prefix_states: array<atomic<u32>>;
-@group(0) @binding(2) var<storage, read_write> out: array<u32>;
+@group(0) @binding(2) var<storage, read_write> out: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read_write> part: atomic<u32>;
 @group(0) @binding(4) var<storage, read_write> debug: array<u32>;
 
@@ -15,7 +15,6 @@ override wg_size: u32;
 var<workgroup> wg_broadcast: u32;
 var<workgroup> exclusive_prefix: u32;
 var<workgroup> scratch: array<u32, wg_size>;
-
 
 
 fn calc_lookback_id(
@@ -35,8 +34,6 @@ fn calc_lookback_id(
   }
 }
 
-
-
 @compute @workgroup_size(wg_size) fn prefix_sum(
         @builtin(subgroup_invocation_id) subgroup_invocation_id: u32,
         @builtin(global_invocation_id) global_id: vec3<u32>, 
@@ -52,15 +49,26 @@ fn calc_lookback_id(
   let sid = local_id.x / subgroup_size;  //Caution 1D workgoup ONLY! Ok, but technically not in HLSL spec
   let my_id = part_id * wg_size * BATCH_SIZE + local_id.x * BATCH_SIZE;
 
-  var values: array<u32, BATCH_SIZE>;
-  var sum = in[my_id];
-  values[0] = sum;
-  for (var i: u32 = 1; i < BATCH_SIZE; i++) {
-      sum += in[my_id + i];
-      values[i] = sum;
+  var values: array<vec4<u32>, BATCH_SIZE>;
+
+  for (var i: u32 = 0; i < BATCH_SIZE; i++) {
+      values[i] = in[my_id + i];
   }
 
-  scratch[local_id.x] = sum;
+  values[0].y += values[0].x;
+  values[0].z += values[0].y;
+  values[0].w += values[0].z;
+
+  for (var i: u32 = 1u; i < BATCH_SIZE; i++) {
+      let prev = values[i - 1u].w;
+
+      values[i].x += prev;
+      values[i].y += values[i].x;
+      values[i].z += values[i].y;
+      values[i].w += values[i].z;
+  }
+
+  scratch[local_id.x] = values[BATCH_SIZE - 1].w;
   workgroupBarrier();
 
   if (sid == 0) {
