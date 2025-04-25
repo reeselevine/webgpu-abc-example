@@ -89,10 +89,10 @@ fn calc_lookback_id(
   if (local_id.x == 0) { // This has to be this rather than get_local_id == 0 bcz exprfx mst be synced by subbarrier in lookback
 
 
-    atomicStore(&prefix_states[part_id], (FLG_A << ANTI_MASK) | (scratch[local_id.x - 1] & MASK_));
+    atomicStore(&prefix_states[part_id], (FLG_A << ANTI_MASK) | (scratch[wg_size - 1] & MASK_));
 
     if (part_id == 0) {
-      atomicStore(&prefix_states[part_id], (FLG_P << ANTI_MASK) | (scratch[local_id.x - 1] & MASK_));
+      atomicStore(&prefix_states[part_id], (FLG_P << ANTI_MASK) | (scratch[wg_size - 1] & MASK_));
     }
     exclusive_prefix = 0;
   }
