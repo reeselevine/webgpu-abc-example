@@ -205,12 +205,15 @@ void run() {
   computePass.SetBindGroup(0, bindGroup, 0, nullptr);
   computePass.DispatchWorkgroups(vec_size / wg_size, 1, 1);
   computePass.End();
-
-  encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
-  encoder.ResolveQuerySet(timestampWrites.querySet, 0, 2, TimestampResolveBuffer, 0);
-  encoder.CopyBufferToBuffer(TimestampResolveBuffer, 0, TimestampReadBuffer, 0, 2 * sizeof(u_long));
   CommandBuffer commands = encoder.Finish();
   queue.Submit(1, &commands);
+
+  CommandEncoder resolveQueryEncoder = device.CreateCommandEncoder();
+  resolveQueryEncoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
+  resolveQueryEncoder.ResolveQuerySet(timestampWrites.querySet, 0, 2, TimestampResolveBuffer, 0);
+  resolveQueryEncoder.CopyBufferToBuffer(TimestampResolveBuffer, 0, TimestampReadBuffer, 0, 2 * sizeof(u_long));
+  CommandBuffer resolveQueryCommands = resolveQueryEncoder.Finish();
+  queue.Submit(1, &resolveQueryCommands);
 
   WaitStatus queueWaitStatus = WaitStatus::Unknown;
   QueueWorkDoneStatus workDoneStatus = QueueWorkDoneStatus::Unknown;
