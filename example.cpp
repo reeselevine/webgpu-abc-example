@@ -184,15 +184,14 @@ void run() {
   CommandBuffer commands = encoder.Finish();
   queue.Submit(1, &commands);
 
-  WaitStatus waitStatus = WaitStatus::Unknown;
-  MapAsyncStatus readStatus = MapAsyncStatus::Unknown;
-  waitStatus = instance.WaitAny(
-    CReadBuffer.MapAsync(MapMode::Read, 0, vec_size * 4, CallbackMode::AllowSpontaneous,
+  MapAsyncStatus readStatus;
+  instance.WaitAny(
+    CReadBuffer.MapAsync(MapMode::Read, 0, vec_size * 4, CallbackMode::WaitAnyOnly,
       [&readStatus](wgpu::MapAsyncStatus status, wgpu::StringView) {
         readStatus = status;
       }),
     UINT64_MAX);
-  if (waitStatus != WaitStatus::Success || readStatus != MapAsyncStatus::Success) {
+  if (readStatus != MapAsyncStatus::Success) {
     std::cout << "Failed to map buffer" << std::endl;
     return;
   }
@@ -206,36 +205,30 @@ void run() {
 }
 
 int main() {
-  InstanceFeatures features;
-  features.timedWaitAnyEnable = true; // for some reason this defaults to false
+  InstanceCapabilities capabilities;
+  capabilities.timedWaitAnyEnable = true; // for some reason this defaults to false
   const char* const instanceEnabledToggles[] = {"allow_unsafe_apis"};
   DawnTogglesDescriptor instanceTogglesDesc;
   instanceTogglesDesc.enabledToggles = instanceEnabledToggles;
   instanceTogglesDesc.enabledToggleCount = 1;
   InstanceDescriptor descriptor;
-  descriptor.features = features;
+  descriptor.capabilities = capabilities;
   descriptor.nextInChain = &instanceTogglesDesc;
   instance = wgpu::CreateInstance(&descriptor);
 
-  const char* const adapterEnabledToggles[] = {"internal_compute_timestamp_queries"};
-  DawnTogglesDescriptor adapterTogglesDesc;
-  adapterTogglesDesc.enabledToggles = adapterEnabledToggles;
-  adapterTogglesDesc.enabledToggleCount = 1;
-
   RequestAdapterOptions adapterOptions;
-  adapterOptions.nextInChain = &adapterTogglesDesc;
   RequestAdapterStatus adapterStatus;
   Adapter adapter;
-  WaitStatus waitStatus = instance.WaitAny(
+  instance.WaitAny(
     instance.RequestAdapter(
-      &adapterOptions, CallbackMode::AllowSpontaneous,
+      &adapterOptions, CallbackMode::WaitAnyOnly,
       [&adapterStatus, &adapter](RequestAdapterStatus s, Adapter _adapter,
                          StringView message) {
         adapterStatus = s;
         adapter = std::move(_adapter);
       }),
     UINT64_MAX);
-  if (waitStatus != WaitStatus::Success || adapterStatus != RequestAdapterStatus::Success) {
+  if (adapterStatus != RequestAdapterStatus::Success) {
     std::cout << "Failed to get adapter" << std::endl;
     return 1;
   }
@@ -252,24 +245,24 @@ int main() {
   DeviceDescriptor deviceDescriptor;
   deviceDescriptor.nextInChain = &deviceTogglesDesc;
   deviceDescriptor.SetDeviceLostCallback(CallbackMode::AllowSpontaneous, 
-    [](const Device& device, DeviceLostReason reason, const char* message) {
+    [](const Device& device, DeviceLostReason reason, StringView message) {
       std::cout << "Device lost! Reason: " << static_cast<int>(reason)
-                << ", Message: " << message << "\n";
+                << ", Message: " << message.data << "\n";
     });
-  deviceDescriptor.SetUncapturedErrorCallback([](const Device& device, ErrorType reason, const char* message) {
+  deviceDescriptor.SetUncapturedErrorCallback([](const Device& device, ErrorType reason, StringView message) {
       std::cout << "Device error! Reason: " << static_cast<int>(reason)
-                << ", Message: " << message << "\n";
+                << ", Message: " << message.data << "\n";
     });
-  waitStatus = instance.WaitAny(
+  instance.WaitAny(
     adapter.RequestDevice(
-      &deviceDescriptor, CallbackMode::AllowSpontaneous,
+      &deviceDescriptor, CallbackMode::WaitAnyOnly,
       [&deviceStatus, &deviceResult](RequestDeviceStatus s,
                          Device device, StringView message) {
         deviceStatus = s;
         deviceResult = std::move(device);
       }),
     UINT64_MAX);
-  if (waitStatus != WaitStatus::Success || deviceStatus != RequestDeviceStatus::Success) {
+  if (deviceStatus != RequestDeviceStatus::Success) {
     std::cout << "Failed to get device" << std::endl;
     return 1;
   }
