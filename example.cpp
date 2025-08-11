@@ -8,14 +8,19 @@ using namespace wgpu;
 Device device;
 Instance instance;
 ComputePipeline pipeline;
+ComputePipeline memsetPipeline;
 Buffer ABuffer;
 Buffer BBuffer;
 Buffer CBuffer;
 Buffer CReadBuffer;
 BindGroup bindGroup;
+BindGroup memsetBindGroup;
 BindGroupLayout bindGroupLayout;
+BindGroupLayout memsetBindGroupLayout;
 const int vec_size = 131072;
 const int wg_size = 128;
+const uint8_t memsetValue = 0x3;
+const uint32_t memsetValue32 = 50529027;
 
 StringView makeStringView(std::string str) {
   return StringView(str.data(), str.length());
@@ -75,6 +80,20 @@ void initBindGroupLayout() {
   bindGroupLayout = device.CreateBindGroupLayout(&bindGroupLayoutDesc);
 }
 
+void initMemsetBindGroupLayout() {
+  std::vector<BindGroupLayoutEntry> bindings;
+
+  BindGroupLayoutEntry CEntry;
+  CEntry.binding = 0;
+  CEntry.buffer.type = BufferBindingType::Storage;
+  CEntry.visibility = ShaderStage::Compute;
+  bindings.push_back(CEntry);
+
+  BindGroupLayoutDescriptor bindGroupLayoutDesc;
+  bindGroupLayoutDesc.entryCount = (uint32_t)bindings.size();
+  bindGroupLayoutDesc.entries = bindings.data();
+  memsetBindGroupLayout = device.CreateBindGroupLayout(&bindGroupLayoutDesc);
+}
 
 void initBindGroup() {
   std::vector<BindGroupEntry> entries;
@@ -107,6 +126,24 @@ void initBindGroup() {
   bindGroup = device.CreateBindGroup(&bindGroupDesc);
 }
 
+void initMemsetBindGroup() {
+  std::vector<BindGroupEntry> entries;
+
+  BindGroupEntry CEntry;
+  CEntry.binding = 0;
+  CEntry.buffer = CBuffer;
+  CEntry.offset = 0;
+  CEntry.size = vec_size * sizeof(int);
+  entries.push_back(CEntry);
+
+  BindGroupDescriptor bindGroupDesc;
+  bindGroupDesc.layout = memsetBindGroupLayout;
+  bindGroupDesc.entryCount = (uint32_t)entries.size();
+  bindGroupDesc.entries = entries.data();
+  memsetBindGroup = device.CreateBindGroup(&bindGroupDesc);
+}
+
+
 void initComputePipeline() {
   // Load compute shader
   ShaderModule shaderModule = loadShader("vec_add.wgsl");
@@ -134,6 +171,40 @@ void initComputePipeline() {
   computePipelineDesc.layout = pipelineLayout;
   pipeline = device.CreateComputePipeline(&computePipelineDesc);
 }
+
+void initMemsetComputePipeline() {
+
+  // Load compute shader
+  ShaderModule shaderModule = loadShader("memset.wgsl");
+
+  // Create compute pipeline layout
+  PipelineLayoutDescriptor pipelineLayoutDesc;
+  pipelineLayoutDesc.bindGroupLayoutCount = 1;
+  pipelineLayoutDesc.bindGroupLayouts = &memsetBindGroupLayout;
+  PipelineLayout pipelineLayout = device.CreatePipelineLayout(&pipelineLayoutDesc);
+
+  // Create compute pipeline
+  ComputePipelineDescriptor computePipelineDesc;
+  std::vector<ConstantEntry> constants(3);
+  StringView wgSizeSV = makeStringView("wg_size");
+  constants[0].key = wgSizeSV;
+  constants[0].value = wg_size;
+  StringView vecSizeSV = makeStringView("vec_size");
+  constants[1].key = vecSizeSV;
+  constants[1].value = vec_size;
+  StringView valueSV = makeStringView("value");
+  constants[2].key = valueSV;
+  constants[2].value = (uint32_t)memsetValue * 0x01010101;
+
+  computePipelineDesc.compute.constantCount = (uint32_t)constants.size();
+  computePipelineDesc.compute.constants = constants.data();
+  StringView entryPointSV = makeStringView("memset");
+  computePipelineDesc.compute.entryPoint = entryPointSV;
+  computePipelineDesc.compute.module = shaderModule;
+  computePipelineDesc.layout = pipelineLayout;
+  memsetPipeline = device.CreateComputePipeline(&computePipelineDesc);
+}
+
 
 void initBuffers() {
   BufferDescriptor ABufDesc;
@@ -200,7 +271,41 @@ void run() {
   for (int i = 0; i < vec_size; i++) {
     assert(output[i] == 3);
   }
-  std::cout << "passed the test!" << std::endl;
+  std::cout << "vectors added successfully!" << std::endl;
+  CReadBuffer.Unmap();
+}
+
+void run_memset() {
+  Queue queue = device.GetQueue();
+  CommandEncoder encoder = device.CreateCommandEncoder();
+  ComputePassEncoder computePass = encoder.BeginComputePass();
+  computePass.SetPipeline(memsetPipeline);
+  computePass.SetBindGroup(0, memsetBindGroup, 0, nullptr);
+  computePass.DispatchWorkgroups(vec_size / wg_size, 1, 1);
+  computePass.End();
+
+  encoder.CopyBufferToBuffer(CBuffer, 0, CReadBuffer, 0, vec_size * 4);
+  CommandBuffer commands = encoder.Finish();
+  queue.Submit(1, &commands);
+
+  MapAsyncStatus readStatus;
+  instance.WaitAny(
+    CReadBuffer.MapAsync(MapMode::Read, 0, vec_size * 4, CallbackMode::WaitAnyOnly,
+      [&readStatus](wgpu::MapAsyncStatus status, wgpu::StringView) {
+        readStatus = status;
+      }),
+    UINT64_MAX);
+  if (readStatus != MapAsyncStatus::Success) {
+    std::cout << "Failed to map buffer" << std::endl;
+    return;
+  }
+
+  const uint* output = (const uint*)CReadBuffer.GetConstMappedRange(0, vec_size * 4);
+  for (int i = 0; i < vec_size; i++) {
+    //std::cout << "output[" << i << "] = " << output[i] << std::endl;
+    assert(output[i] == memsetValue32);
+  }
+  std::cout << "memset succeeded!" << std::endl;
   CReadBuffer.Unmap();
 }
 
@@ -274,9 +379,13 @@ int main() {
   std::cout << "using device: " << deviceName << std::endl;
   initBindGroupLayout();
   initComputePipeline();
+  initMemsetBindGroupLayout();
+  initMemsetComputePipeline();
   initBuffers();
   initBindGroup();
-  run();
+  initMemsetBindGroup();
+  //run();
+  run_memset();
 
   return 0;
 }
